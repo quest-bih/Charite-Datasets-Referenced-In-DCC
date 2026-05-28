@@ -1,12 +1,630 @@
 ---
-title: "Charite-Datasets-Referenced-In-DCC"
+title: "Charité Datasets Mentioned in DCC"
+date: "today"
+author: "Avihay Cohen"
+format:
+  html:
+    self-contained: true
 editor: source
 ---
 
-## Quarto
+```{r setup, echo=FALSE, include=FALSE}
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+# Set environment language to English
+Sys.setenv(LANG = "EN")
 
-```{r}
-1 + 1
+# Load libraries
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+library(pacman)
+pacman::p_load(tidyverse, DT, patchwork, RColorBrewer, here, tcltk, networkD3, lubridate)
+
+# Source functions
+list.files("R", pattern = "\\.R$", full.names = TRUE) |>
+  purrr::walk(source)
+
+```
+
+```{r helper_functions, echo=FALSE, include=FALSE}
+
+show_error_and_stop <- function(message_text) {
+  tcltk::tkmessageBox(
+    title = "Input error",
+    message = message_text,
+    icon = "error",
+    type = "ok"
+  )
+
+  stop(message_text, call. = FALSE)
+}
+
+normalize_tk_path <- function(path_choice) {
+  if (length(path_choice) == 0 || all(is.na(path_choice))) {
+    return("")
+  }
+
+  path_choice |>
+    as.character() |>
+    paste(collapse = " ") |>
+    stringr::str_replace_all("^\\{|\\}$", "")
+}
+
+choose_one_file <- function(caption) {
+  chosen_path <- tcltk::tk_choose.files(
+    caption = caption,
+    multi = FALSE
+  ) |>
+    normalize_tk_path()
+
+  if (identical(chosen_path, "")) {
+    show_error_and_stop("No file was selected.")
+  }
+
+  chosen_path
+}
+
+choose_one_folder <- function(caption) {
+  chosen_path <- tcltk::tk_choose.dir(
+    caption = caption
+  ) |>
+    normalize_tk_path()
+
+  if (identical(chosen_path, "")) {
+    show_error_and_stop("No folder was selected.")
+  }
+
+  chosen_path
+}
+
+rda_to_object <- function(file_path) {
+  temp_env <- new.env(parent = emptyenv())
+
+  loaded_names <- load(file = file_path, envir = temp_env)
+
+  if (length(loaded_names) == 1) {
+    return(get(loaded_names[[1]], envir = temp_env))
+  }
+
+  data_frame_names <- loaded_names[
+    loaded_names |>
+      purrr::map_lgl(\(object_name) {
+        get(object_name, envir = temp_env) |>
+          inherits("data.frame")
+      })
+  ]
+
+  if (length(data_frame_names) == 1) {
+    return(get(data_frame_names[[1]], envir = temp_env))
+  }
+
+  show_error_and_stop(
+    paste0(
+      "The chosen RDA/RData file contains multiple objects. ",
+      "Please make sure that it contains one dataset object only, ",
+      "or convert it to a single-object RDS first."
+    )
+  )
+}
+
+save_converted_rds <- function(data_object, source_path, derived_folder) {
+  rds_path <- file.path(
+    derived_folder,
+    paste0(tools::file_path_sans_ext(basename(source_path)), ".rds")
+  )
+
+  saveRDS(data_object, rds_path)
+
+  rds_path
+}
+
+load_r_object_file <- function(file_path, invalid_message, derived_folder = NULL) {
+  file_ext <- file_path |>
+    tools::file_ext() |>
+    tolower()
+
+  if (identical(file_ext, "rds")) {
+    return(readRDS(file_path))
+  }
+
+  if (file_ext %in% c("rda", "rdata")) {
+    loaded_object <- rda_to_object(file_path)
+
+    if (!is.null(derived_folder)) {
+      save_converted_rds(
+        data_object = loaded_object,
+        source_path = file_path,
+        derived_folder = derived_folder
+      )
+    }
+
+    return(loaded_object)
+  }
+
+  show_error_and_stop(invalid_message)
+}
+
+```
+
+```{r choose_paths_and_load_data, echo=FALSE, include=FALSE}
+
+output_folder <- choose_one_folder(
+  caption = "Choose the output folder"
+)
+
+derived_folder <- file.path(output_folder, "derived")
+dir.create(derived_folder, recursive = TRUE, showWarnings = FALSE)
+
+charite_input_path <- choose_one_file(
+  caption = "Choose the Charité datasets list file (RDS / RDA / RData)"
+)
+
+data_raw_charite <- load_r_object_file(
+  file_path = charite_input_path,
+  invalid_message = "Please make sure that the chosen file is a RDS / RDA file!",
+  derived_folder = derived_folder
+)
+
+if (!inherits(data_raw_charite, "data.frame")) {
+  show_error_and_stop("The Charité file must contain one data frame / tibble.")
+}
+
+dcc_input_type <- tcltk::tk_select.list(
+  choices = c(
+    "RDS / RDA file",
+    "Folder with CSV files"
+  ),
+  multiple = FALSE,
+  title = "Choose the DCC input type"
+)
+
+if (identical(dcc_input_type, "")) {
+  show_error_and_stop("Please choose how the DCC is stored.")
+}
+
+dcc_input_path <- if (identical(dcc_input_type, "Folder with CSV files")) {
+  choose_one_folder(
+    caption = "Choose the folder that contains the DCC CSV files"
+  )
+} else {
+  choose_one_file(
+    caption = "Choose the DCC file (RDS / RDA / RData)"
+  )
+}
+
+data_raw_dcc <- if (dir.exists(dcc_input_path)) {
+  if (!exists("dcc_csv_to_rds", mode = "function")) {
+    show_error_and_stop(
+      "The folder option was chosen, but dcc_csv_to_rds() is not available yet."
+    )
+  }
+
+  dcc_result <- dcc_csv_to_rds(dcc_input_path)
+
+  if (is.character(dcc_result) && length(dcc_result) == 1 && file.exists(dcc_result)) {
+    readRDS(dcc_result)
+  } else {
+    dcc_result
+  }
+} else {
+  load_r_object_file(
+    file_path = dcc_input_path,
+    invalid_message = "Please make sure that the chosen file is a RDS / RDA file or a path for the CSVs file!",
+    derived_folder = derived_folder
+  )
+}
+
+if (!inherits(data_raw_dcc, "data.frame")) {
+  show_error_and_stop("The DCC input must contain one data frame / tibble.")
+}
+
+```
+
+```{r get_charite_open_datasets, echo=FALSE, include=FALSE}
+
+default_filter_columns <- intersect(
+  c("data_access", "own_or_reuse_data", "open_data_assessment"),
+  names(data_raw_charite)
+)
+
+selected_filter_columns <- tcltk::tk_select.list(
+  choices = names(data_raw_charite),
+  preselect = default_filter_columns,
+  multiple = TRUE,
+  title = "Select the Charité columns that define whether a dataset is open"
+)
+
+if (length(selected_filter_columns) == 0) {
+  show_error_and_stop(
+    "Please select at least one column for the 'open dataset' filter."
+  )
+}
+
+combination_table <- data_raw_charite |>
+  dplyr::count(
+    dplyr::across(all_of(selected_filter_columns)),
+    name = ".n",
+    sort = TRUE
+  )
+
+combination_labels <- combination_table |>
+  dplyr::select(all_of(selected_filter_columns)) |>
+  purrr::pmap_chr(
+    \(...) {
+      row_values <- list(...)
+
+      value_text <- row_values |>
+        purrr::map_chr(\(value) {
+          dplyr::coalesce(as.character(value), "<NA>")
+        })
+
+      selected_filter_columns |>
+        purrr::map2_chr(
+          value_text,
+          \(column_name, value_name) {
+            paste0(column_name, " = ", value_name)
+          }
+        ) |>
+        paste(collapse = "; ")
+    }
+  )
+
+combination_table <- combination_table |>
+  dplyr::mutate(
+    .label = paste0("[n = ", .n, "] ", combination_labels)
+  )
+
+selected_combination_labels <- tcltk::tk_select.list(
+  choices = combination_table$.label,
+  multiple = TRUE,
+  title = "Select the value-combinations to keep in the Charité data"
+)
+
+if (length(selected_combination_labels) == 0) {
+  show_error_and_stop(
+    "Please select at least one value-combination to keep."
+  )
+}
+
+selected_combinations <- combination_table |>
+  dplyr::filter(.label %in% selected_combination_labels) |>
+  dplyr::select(-.n, -.label)
+
+data_raw_charite <- data_raw_charite |>
+  dplyr::semi_join(
+    selected_combinations,
+    by = selected_filter_columns
+  )
+
+if (nrow(data_raw_charite) == 0) {
+  tcltk::tkmessageBox(
+    title = "No rows kept",
+    message = "The selected combinations kept 0 rows in the Charité data.",
+    icon = "warning",
+    type = "ok"
+  )
+}
+
+```
+
+```{r choose_analysis_columns, echo=FALSE, include=FALSE}
+
+charite_window <- tktoplevel()
+tkwm.title(charite_window, "Choose Charité columns for the analysis")
+
+charite_intro_text <- paste(
+  "Choose which columns should be used for each analysis column.",
+  sep = "\n"
+)
+
+tkgrid(
+  ttklabel(
+    charite_window,
+    text = charite_intro_text,
+    justify = "left",
+    wraplength = 700
+  ),
+  columnspan = 2,
+  padx = 10,
+  pady = 10,
+  sticky = "w"
+)
+
+charite_choices <- names(data_raw_charite)
+
+charite_dataset_var <- tclVar(charite_choices[[1]])
+charite_doi_var <- tclVar(charite_choices[[1]])
+
+tkgrid(
+  ttklabel(charite_window, text = "Column to use as dataset identifier:"),
+  ttkcombobox(charite_window, textvariable = charite_dataset_var, values = charite_choices, state = "readonly", width = 30),
+  padx = 10,
+  pady = 4,
+  sticky = "w"
+)
+
+tkgrid(
+  ttklabel(charite_window, text = "Column to use as article DOI:"),
+  ttkcombobox(charite_window, textvariable = charite_doi_var, values = charite_choices, state = "readonly", width = 30),
+  padx = 10,
+  pady = 4,
+  sticky = "w"
+)
+
+charite_done <- tclVar(0)
+
+tkgrid(
+  ttkbutton(charite_window, text = "OK", command = function() tclvalue(charite_done) <- 1),
+  padx = 10,
+  pady = 10,
+  sticky = "w"
+)
+
+tkwait.variable(charite_done)
+
+charite_column_map <- c(
+  dataset = tclvalue(charite_dataset_var),
+  doi = tclvalue(charite_doi_var)
+)
+
+tkdestroy(charite_window)
+
+dcc_window <- tktoplevel()
+tkwm.title(dcc_window, "Choose DCC columns for the analysis")
+
+dcc_intro_text <- paste(
+  "These are the columns found in the DCC data:",
+  paste(names(data_raw_dcc), collapse = ", "),
+  "",
+  "Choose which raw DCC column should be used for each analysis column.",
+  sep = "\n"
+)
+
+tkgrid(
+  ttklabel(
+    dcc_window,
+    text = dcc_intro_text,
+    justify = "left",
+    wraplength = 700
+  ),
+  columnspan = 2,
+  padx = 10,
+  pady = 10,
+  sticky = "w"
+)
+
+dcc_choices <- names(data_raw_dcc)
+
+dcc_dataset_var <- tclVar(dcc_choices[[1]])
+dcc_doi_var <- tclVar(dcc_choices[[1]])
+
+tkgrid(
+  ttklabel(dcc_window, text = "Column to use as dataset identifier:"),
+  ttkcombobox(dcc_window, textvariable = dcc_dataset_var, values = dcc_choices, state = "readonly", width = 30),
+  padx = 10,
+  pady = 4,
+  sticky = "w"
+)
+
+tkgrid(
+  ttklabel(dcc_window, text = "Column to use as article DOI:"),
+  ttkcombobox(dcc_window, textvariable = dcc_doi_var, values = dcc_choices, state = "readonly", width = 30),
+  padx = 10,
+  pady = 4,
+  sticky = "w"
+)
+
+dcc_done <- tclVar(0)
+
+tkgrid(
+  ttkbutton(dcc_window, text = "OK", command = function() tclvalue(dcc_done) <- 1),
+  padx = 10,
+  pady = 10,
+  sticky = "w"
+)
+
+tkwait.variable(dcc_done)
+
+dcc_column_map <- c(
+  dataset = tclvalue(dcc_dataset_var),
+  doi = tclvalue(dcc_doi_var)
+)
+
+tkdestroy(dcc_window)
+
+```
+
+```{r rename_and_clean, echo=FALSE, include=FALSE}
+
+data_raw_charite_renamed <- data_raw_charite |>
+  dplyr::rename_with(
+    ~ names(charite_column_map),
+    .cols = all_of(unname(charite_column_map))
+  )
+
+data_raw_dcc_renamed <- data_raw_dcc |>
+  dplyr::rename_with(
+    ~ names(dcc_column_map),
+    .cols = all_of(unname(dcc_column_map))
+  )
+
+charite_data_clean_col <- dataset_cleaner(
+  input = data_raw_charite_renamed |>
+    dplyr::select(dataset),
+  dataset_name = "charite_cleaning_steps",
+  output_folder = file.path(derived_folder, "charite")
+)
+
+dcc_data_clean_col <- dataset_cleaner(
+  input = data_raw_dcc_renamed |>
+    dplyr::select(dataset),
+  dataset_name = "dcc_cleaning_steps",
+  output_folder = file.path(derived_folder, "dcc")
+)
+
+charite_data_clean <- data_raw_charite_renamed |>
+  dplyr::left_join(
+    charite_data_clean_col |>
+      dplyr::select(dataset, dataset_clean),
+    by = "dataset"
+  ) |>
+  dplyr::relocate(dataset_clean, .after = dataset)
+
+dcc_data_clean <- data_raw_dcc_renamed |>
+  dplyr::left_join(
+    dcc_data_clean_col |>
+      dplyr::select(dataset, dataset_clean),
+    by = "dataset"
+  ) |>
+  dplyr::relocate(dataset_clean, .after = dataset) |> 
+  dplyr::filter(
+    doi != dataset_clean,
+    doi != dataset
+  )
+
+```
+
+Successfully loaded Charité and DCC dataset identifiers lists! Charité has a unique number of **`r charite_data_clean |> dplyr::summarise(n = dplyr::n_distinct(dataset)) |> dplyr::pull(n)`** datasets, and DCC has a unique number of **`r dcc_data_clean |> dplyr::summarise(n = dplyr::n_distinct(dataset)) |> dplyr::pull(n)`** datasets.
+
+```{r match_and_clean, echo=FALSE, warning=FALSE}
+
+charite_dcc_joined <- charite_data_clean |>
+  dplyr::inner_join(
+    dcc_data_clean,
+    by = "dataset_clean",
+    suffix = c("_charite", "_dcc")
+  )
+
+charite_dcc_joined_dedup <- charite_dcc_joined |>
+  dplyr::distinct()
+
+```
+
+```{r save objects, echo=FALSE}
+
+objects_to_save <- list(
+  data_raw_charite = data_raw_charite,
+  data_raw_charite_renamed = data_raw_charite_renamed,
+  data_raw_dcc = data_raw_dcc,
+  data_raw_dcc_renamed = data_raw_dcc_renamed,
+  charite_data_clean = charite_data_clean,
+  dcc_data_clean = dcc_data_clean,
+  charite_dcc_joined = charite_dcc_joined,
+  charite_dcc_joined_dedup = charite_dcc_joined_dedup
+)
+
+purrr::iwalk(
+  objects_to_save,
+  \(object, object_name) {
+    saveRDS(
+      object,
+      file = file.path(derived_folder, paste0(object_name, ".rds"))
+    )
+  }
+)
+
+```
+
+```{r count, echo=FALSE}
+
+joined_counts <- tibble::tibble(
+  `Number of Charité Articles` =
+    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(doi_charite, na.rm = TRUE)) |> dplyr::pull(n),
+  `Number of Mentioning Articles` =
+    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(doi_dcc, na.rm = TRUE)) |> dplyr::pull(n),
+  `Number of Mentioned Datasets` =
+    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |> dplyr::pull(n),
+  `Number of Mentions` =
+    charite_dcc_joined_dedup |>
+      dplyr::distinct(doi_dcc, dataset_clean) |>
+      dplyr::summarise(n = dplyr::n()) |>
+      dplyr::pull(n)
+)
+
+```
+
+```{r present_table, echo=FALSE}
+
+DT::datatable(
+  joined_counts,
+  rownames = FALSE,
+  class = "compact stripe hover",
+  options = list(
+    pageLength = 10,
+    autoWidth = TRUE,
+    dom = "tip"
+  ),
+  caption = htmltools::tags$caption(
+    style = "caption-side: top; text-align: left;",
+    "Summary counts from the deduplicated joined table"
+  )
+)
+
+```
+
+```{r plot-charite-year-counts, echo=FALSE}
+charite_year_counts <- prep_charite_year_counts(charite_data_clean)
+```
+
+```{r plot-charite-year-counts-fig, echo=FALSE}
+#| fig-width: !expr plot_width_from_n_x_values(nrow(charite_year_counts))
+#| fig-height: 6
+
+plot_charite_year_counts(charite_year_counts)
+```
+
+```{r plot-charite-dataset-freq, echo=FALSE}
+charite_dataset_freq <- prep_charite_dataset_frequency(charite_data_clean)
+```
+
+```{r plot-charite-dataset-freq-fig, echo=FALSE}
+#| fig-width: 8
+#| fig-height: 6
+
+plot_charite_dataset_frequency(charite_dataset_freq)
+```
+
+```{r plot-dcc-reference-freq, echo=FALSE}
+dcc_reference_freq <- prep_dcc_reference_frequency(
+  dcc_data_clean,
+  doi_col = "doi"
+)
+```
+
+```{r plot-dcc-reference-freq-fig, echo=FALSE}
+#| fig-width: 8
+#| fig-height: 6
+
+plot_dcc_reference_frequency(dcc_reference_freq)
+```
+
+```{r plot-matched-reference-freq, echo=FALSE}
+matched_reference_freq <- prep_matched_reference_frequency(
+  charite_dcc_joined_dedup,
+  doi_col = "doi_dcc"
+)
+```
+
+```{r plot-matched-reference-freq-fig, echo=FALSE}
+#| fig-width: 8
+#| fig-height: 6
+
+plot_matched_reference_frequency(matched_reference_freq)
+```
+
+```{r plot-matched-repo-counts, echo=FALSE}
+matched_repo_counts <- prep_repository_counts(
+  charite_dcc_joined_dedup,
+  repository_col = "repository",
+  dataset_col = "dataset_clean",
+  doi_col = "doi_dcc"
+)
+```
+
+```{r plot-matched-repo-counts-fig, echo=FALSE}
+#| fig-width: 10
+#| fig-height: !expr plot_height_from_n_categories(nrow(matched_repo_counts))
+
+plot_repository_counts(
+  matched_repo_counts,
+  y_label = "Number of matched references (log scale)"
+)
 ```

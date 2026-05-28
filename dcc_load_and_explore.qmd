@@ -1,0 +1,166 @@
+---
+title: "dcc_load_and_explore"
+date: "today"
+author: "Avihay Cohen"
+format:
+  html:
+    self-contained: true
+editor: source
+---
+
+```{r setup, echo=FALSE}
+
+Sys.setenv(LANG = "EN")  # Set environment language to English
+
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+library(pacman)
+pacman::p_load(tidyverse, DT, patchwork, RColorBrewer, here, tcltk, networkD3, lubridate)
+
+save_cr <- function(..., file) {
+  dir_path <- dirname(file)
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE)
+  }
+  save(..., file = file)
+} # wrapper for save() with automatic directory creation
+
+save_rds_cr <- function(object, file) {
+  dir_path <- dirname(file)
+  
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE)
+  }
+  
+  saveRDS(object, file = file)
+} # wrapper for saveRDS() with automatic directory creation
+
+write_csv_cr <- function(x, file, ...) {
+  dir_path <- dirname(file)
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE)
+  }
+  write.csv(x, file = file, ...)
+} # wrapper for write.csv() with automatic directory creation
+
+```
+
+# Data Citation Corpus (DCC) Loading, Cleaning and Overview
+
+## 1. (DCC) Loading and initial exploration
+
+<br>
+
+The DCC (v4.1) was downloaded as a list of csv files that were then combined into one .rds object.
+
+The DCC was then explored to find:
+
+1.  Relevant columns' names
+
+2.  Missing values
+
+3.  Errors in publication dates
+
+The Chunk below lets the user choose a folder with the downloaded csv files and combine them into one RData object.
+
+```{r Loading and cleaning}
+
+# 1. Loading and cleaning the DCC list (v4.1) ---------------------------------------------------------
+
+# DCC data dictionary can be found here:
+# https://zenodo.org/records/16901115
+
+# Uncomment when running chunk independently:
+# selected_dir <- selectDirectory(caption = "Select a Directory") # select DCC csv files directory
+
+# Check if directory is already set
+if (!exists("selected_dir")) {
+  # Try to select a directory
+  selected_dir <- tryCatch({
+    tclvalue(tkchooseDirectory(title = "Please select a directory containing DCC corpus csv files"))
+  }, error = function(e) {
+    stop("No directory selected or selection was cancelled!")
+  })
+  
+  if (nchar(selected_dir) == 0) {
+    stop("Directory selection was cancelled!")
+  }
+}
+
+# Let user choosee folder with csv files
+message("Selected directory: ", selected_dir)
+
+# Set wd
+setwd(selected_dir)
+
+# Get a list of all CSV files in the directory
+file_list <- list.files(pattern = "*.csv")
+
+# Read all CSV files into a list of data frames
+data_list <- lapply(file_list, read.csv)
+
+# Combine the list of data frames into a single data frame
+DCC_corpus_orig <- bind_rows(data_list)
+
+# Save DCC as .rds object
+save_rds_cr(DCC_corpus_orig, file = file.path(here(
+  "data",
+  "raw",
+  "dcc",
+  "DCC_corpus_v41_orig.rds")))
+
+DCC_corpus <- DCC_corpus_orig # assign _orig to a new variable
+
+rm(data_list, file_list) # clean up
+```
+
+<br>
+
+### 1.1 DCC Data Dictionary
+
+<br>
+
+**Table 1.** Below shows the relevant columns for the analysis and their description.
+
+<br>
+
+#### Table 1. DCC Data dictionary
+
+<br>
+
+```{r DCC data dictionary}
+
+# Create data dictionary table
+dcc_cols_dict <- tibble(
+  Column_name = c(
+    "publication",         
+    "publishedDate",
+    "dataset",
+    "repository",
+    "publisher",      
+    "journal"
+  ),
+  Description = c(
+    "Citing paper's DOI",
+    "of citing paper",
+    "Data identifier (=doi) or accession number (cited dataset)",
+    "of cited dataset",
+    "of citing paper",
+    "of citing paper"
+  )
+)
+
+# Render table
+
+datatable(
+  dcc_cols_dict, 
+  options = list(
+    pageLength = -1,  # display all entries by default
+    scrollY = "200px",  # enable vertical scrolling
+    scrollX = TRUE,     # enable horizontal scrolling for both content and header
+    lengthMenu = list(c(-1, 5, 10, 25, 50), c("All", 5, 10, 25, 50)),
+    dom = 'Bfrtip',
+    buttons = c('csv')
+    ),
+  extensions = 'Buttons'
+  )
+```

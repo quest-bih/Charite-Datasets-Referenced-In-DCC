@@ -1,4 +1,27 @@
-.Rproj.user
+# R / RStudio
+.Rproj.user/
 .Rhistory
 .RData
 .Ruserdata
+
+# renv (project-local package library; never commit)
+renv/library/
+
+# Quarto
+.quarto/
+_output/
+_site/
+_freeze/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Project-specific outputs
+notebooks/plots/
+data/raw/dcc/
+data/wrangling_steps/dcc/
+data/processed/dcc/
+/.quarto/
