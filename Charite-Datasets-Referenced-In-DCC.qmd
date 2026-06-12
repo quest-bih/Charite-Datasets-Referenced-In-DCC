@@ -434,31 +434,39 @@ tkdestroy(dcc_window)
 
 ```{r rename_and_clean, echo=FALSE, include=FALSE}
 
+# The user has selected the "DOI" and "Dataset" columns. Here we will rename them:
+
 data_raw_charite_renamed <- data_raw_charite |>
   dplyr::rename_with(
     ~ names(charite_column_map),
     .cols = all_of(unname(charite_column_map))
-  )
+  ) # ODDPub
 
 data_raw_dcc_renamed <- data_raw_dcc |>
   dplyr::rename_with(
     ~ names(dcc_column_map),
     .cols = all_of(unname(dcc_column_map))
-  )
+  ) # DCC
+
+# Here we will apply the dataset_cleaner function in order to get the cleanest dataset identifier possible from each input:
 
 charite_data_clean_col <- dataset_cleaner(
   input = data_raw_charite_renamed |>
-    dplyr::select(dataset),
+    dplyr::select(dataset) |> 
+    distinct(),
   dataset_name = "charite_cleaning_steps",
   output_folder = file.path(derived_folder, "charite")
-)
+) # ODDPub
 
 dcc_data_clean_col <- dataset_cleaner(
   input = data_raw_dcc_renamed |>
-    dplyr::select(dataset),
+    dplyr::select(dataset) |> 
+    distinct(),
   dataset_name = "dcc_cleaning_steps",
   output_folder = file.path(derived_folder, "dcc")
-)
+) # DCC
+
+# And below we will join the clean dataset identifiers back to the original input tables
 
 charite_data_clean <- data_raw_charite_renamed |>
   dplyr::left_join(
@@ -466,7 +474,7 @@ charite_data_clean <- data_raw_charite_renamed |>
       dplyr::select(dataset, dataset_clean),
     by = "dataset"
   ) |>
-  dplyr::relocate(dataset_clean, .after = dataset)
+  dplyr::relocate(dataset_clean, .after = dataset) # ODDPub
 
 dcc_data_clean <- data_raw_dcc_renamed |>
   dplyr::left_join(
@@ -478,7 +486,7 @@ dcc_data_clean <- data_raw_dcc_renamed |>
   dplyr::filter(
     doi != dataset_clean,
     doi != dataset
-  )
+  ) # DCC (also: remove cases where the doi value is the same as the original / clean dataset value)
 
 ```
 
@@ -526,17 +534,35 @@ purrr::iwalk(
 ```{r count, echo=FALSE}
 
 joined_counts <- tibble::tibble(
-  `Number of Charité Articles` =
-    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(doi_charite, na.rm = TRUE)) |> dplyr::pull(n),
-  `Number of Mentioning Articles` =
-    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(doi_dcc, na.rm = TRUE)) |> dplyr::pull(n),
-  `Number of Mentioned Datasets` =
-    charite_dcc_joined_dedup |> dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |> dplyr::pull(n),
-  `Number of Mentions` =
-    charite_dcc_joined_dedup |>
-      dplyr::distinct(doi_dcc, dataset_clean) |>
+  Metric = c(
+    "Charité Articles",
+    "Charité Datasets",
+    "DCC Mentioning Articles",
+    "DCC Mentions",
+    "DCC Datasets"
+  ),
+  `Unique Count` = c(
+    charite_data_clean |>
+      dplyr::summarise(n = dplyr::n_distinct(doi, na.rm = TRUE)) |>
+      dplyr::pull(n),
+    
+    charite_data_clean |>
+      dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |>
+      dplyr::pull(n),
+    
+    dcc_data_clean |>
+      dplyr::summarise(n = dplyr::n_distinct(doi, na.rm = TRUE)) |>
+      dplyr::pull(n),
+    
+    dcc_data_clean |>
+      dplyr::distinct(doi, dataset_clean) |>
       dplyr::summarise(n = dplyr::n()) |>
+      dplyr::pull(n),
+    
+    dcc_data_clean |>
+      dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |>
       dplyr::pull(n)
+  )
 )
 
 ```
@@ -554,77 +580,77 @@ DT::datatable(
   ),
   caption = htmltools::tags$caption(
     style = "caption-side: top; text-align: left;",
-    "Summary counts from the deduplicated joined table"
+    "Summary of distinct counts from each of the inputs"
   )
 )
 
 ```
 
 ```{r plot-charite-year-counts, echo=FALSE}
-charite_year_counts <- prep_charite_year_counts(charite_data_clean)
+# charite_year_counts <- prep_charite_year_counts(charite_data_clean)
 ```
 
 ```{r plot-charite-year-counts-fig, echo=FALSE}
-#| fig-width: !expr plot_width_from_n_x_values(nrow(charite_year_counts))
-#| fig-height: 6
+# #| fig-width: !expr plot_width_from_n_x_values(nrow(charite_year_counts))
+# #| fig-height: 6
 
-plot_charite_year_counts(charite_year_counts)
+# plot_charite_year_counts(charite_year_counts)
 ```
 
 ```{r plot-charite-dataset-freq, echo=FALSE}
-charite_dataset_freq <- prep_charite_dataset_frequency(charite_data_clean)
+# charite_dataset_freq <- prep_charite_dataset_frequency(charite_data_clean)
 ```
 
 ```{r plot-charite-dataset-freq-fig, echo=FALSE}
-#| fig-width: 8
-#| fig-height: 6
-
-plot_charite_dataset_frequency(charite_dataset_freq)
+# #| fig-width: 8
+# #| fig-height: 6
+# 
+# plot_charite_dataset_frequency(charite_dataset_freq)
 ```
 
 ```{r plot-dcc-reference-freq, echo=FALSE}
-dcc_reference_freq <- prep_dcc_reference_frequency(
-  dcc_data_clean,
-  doi_col = "doi"
-)
+# dcc_reference_freq <- prep_dcc_reference_frequency(
+#   dcc_data_clean,
+#   doi_col = "doi"
+# )
 ```
 
 ```{r plot-dcc-reference-freq-fig, echo=FALSE}
-#| fig-width: 8
-#| fig-height: 6
+# #| fig-width: 8
+# #| fig-height: 6
 
-plot_dcc_reference_frequency(dcc_reference_freq)
+# plot_dcc_reference_frequency(dcc_reference_freq)
 ```
 
 ```{r plot-matched-reference-freq, echo=FALSE}
-matched_reference_freq <- prep_matched_reference_frequency(
-  charite_dcc_joined_dedup,
-  doi_col = "doi_dcc"
-)
+# matched_reference_freq <- prep_matched_reference_frequency(
+#   charite_dcc_joined_dedup,
+#   doi_col = "doi_dcc"
+# )
 ```
 
-```{r plot-matched-reference-freq-fig, echo=FALSE}
-#| fig-width: 8
-#| fig-height: 6
+```{r plot-matched-reference-freq-fig, echo=FALSE, warning=FALSE}
+# #| fig-width: 8
+# #| fig-height: 6
 
-plot_matched_reference_frequency(matched_reference_freq)
+# plot_matched_reference_frequency(matched_reference_freq)
 ```
 
 ```{r plot-matched-repo-counts, echo=FALSE}
-matched_repo_counts <- prep_repository_counts(
-  charite_dcc_joined_dedup,
-  repository_col = "repository",
-  dataset_col = "dataset_clean",
-  doi_col = "doi_dcc"
-)
+# matched_repo_counts <- prep_repository_counts(
+#   charite_dcc_joined_dedup,
+#   repository_col = "repository",
+#   dataset_col = "dataset_clean",
+#   doi_col = "doi_dcc"
+# )
 ```
 
 ```{r plot-matched-repo-counts-fig, echo=FALSE}
-#| fig-width: 10
-#| fig-height: !expr plot_height_from_n_categories(nrow(matched_repo_counts))
+# #| fig-width: 10
+# #| fig-height: !expr plot_height_from_n_categories(nrow(matched_repo_counts))
 
-plot_repository_counts(
-  matched_repo_counts,
-  y_label = "Number of matched references (log scale)"
-)
+# plot_repository_counts(
+#   matched_repo_counts,
+#   y_label = "Number of matched references (log scale)"
+# )
 ```
