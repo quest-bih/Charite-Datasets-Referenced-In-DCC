@@ -1,5 +1,5 @@
 ---
-title: "Charité Datasets Mentioned in DCC"
+title: "Dataset Identifiers Mentioned in DCC"
 date: "today"
 author: "Avihay Cohen"
 format:
@@ -10,15 +10,12 @@ editor: source
 
 ```{r setup, echo=FALSE, include=FALSE}
 
-# Set environment language to English
 Sys.setenv(LANG = "EN")
 
-# Load libraries
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 library(pacman)
 pacman::p_load(tidyverse, DT, patchwork, RColorBrewer, here, tcltk, networkD3, lubridate)
 
-# Source functions
 list.files("R", pattern = "\\.R$", full.names = TRUE) |>
   purrr::walk(source)
 
@@ -142,9 +139,419 @@ load_r_object_file <- function(file_path, invalid_message, derived_folder = NULL
   show_error_and_stop(invalid_message)
 }
 
+load_csv_file <- function(file_path, derived_folder) {
+  loaded_object <- readr::read_csv(
+    file_path,
+    show_col_types = FALSE
+  )
+
+  save_converted_rds(
+    data_object = loaded_object,
+    source_path = file_path,
+    derived_folder = derived_folder
+  )
+
+  loaded_object
+}
+
+load_dcc_csv_folder <- function(folder_path, derived_folder) {
+  if (!exists("dcc_csv_to_rds", mode = "function")) {
+    show_error_and_stop(
+      "The folder option was chosen, but dcc_csv_to_rds() is not available yet."
+    )
+  }
+
+  dcc_result <- dcc_csv_to_rds(
+  folder_path = folder_path,
+  output_folder = derived_folder
+  )
+
+  if (is.character(dcc_result) && length(dcc_result) == 1 && file.exists(dcc_result)) {
+    return(readRDS(dcc_result))
+  }
+
+  if (inherits(dcc_result, "data.frame")) {
+    save_converted_rds(
+      data_object = dcc_result,
+      source_path = folder_path,
+      derived_folder = derived_folder
+    )
+
+    return(dcc_result)
+  }
+
+  show_error_and_stop(
+    "dcc_csv_to_rds() did not return a data frame or a valid RDS path."
+  )
+}
+
+choose_storage_state <- function(input_name, is_dcc = FALSE) {
+  choice_options <- if (is_dcc) {
+    c(
+      "Raw RDS / RDA / RData",
+      "Already-cleaned RDS / RDA / RData",
+      "Folder with raw CSV files",
+      "Folder with already-cleaned CSV files"
+    )
+  } else {
+    c(
+      "Raw RDS / RDA / RData",
+      "Already-cleaned RDS / RDA / RData",
+      "Raw CSV file",
+      "Already-cleaned CSV file"
+    )
+  }
+
+  chosen_state <- tcltk::tk_select.list(
+    choices = choice_options,
+    multiple = FALSE,
+    title = paste("Choose the", input_name, "input type")
+  )
+
+  if (identical(chosen_state, "")) {
+    show_error_and_stop(
+      paste0("Please choose how the ", input_name, " input is stored.")
+    )
+  }
+
+  chosen_state
+}
+
+choose_input_path <- function(input_name, storage_state) {
+  if (stringr::str_detect(storage_state, "^Folder")) {
+    return(
+      choose_one_folder(
+        caption = paste("Choose the", input_name, "folder")
+      )
+    )
+  }
+
+  choose_one_file(
+    caption = paste("Choose the", input_name, "file")
+  )
+}
+
+load_input_data <- function(input_name, storage_state, input_path, derived_folder) {
+  loaded_object <- dplyr::case_when(
+    identical(storage_state, "Raw RDS / RDA / RData") ~ list(
+      load_r_object_file(
+        file_path = input_path,
+        invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
+        derived_folder = derived_folder
+      )
+    ),
+    identical(storage_state, "Already-cleaned RDS / RDA / RData") ~ list(
+      load_r_object_file(
+        file_path = input_path,
+        invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
+        derived_folder = derived_folder
+      )
+    ),
+    identical(storage_state, "Raw CSV file") ~ list(
+      load_csv_file(
+        file_path = input_path,
+        derived_folder = derived_folder
+      )
+    ),
+    identical(storage_state, "Already-cleaned CSV file") ~ list(
+      load_csv_file(
+        file_path = input_path,
+        derived_folder = derived_folder
+      )
+    ),
+    identical(storage_state, "Folder with raw CSV files") ~ list(
+      load_dcc_csv_folder(
+        folder_path = input_path,
+        derived_folder = derived_folder
+      )
+    ),
+    identical(storage_state, "Folder with already-cleaned CSV files") ~ list(
+      load_dcc_csv_folder(
+        folder_path = input_path,
+        derived_folder = derived_folder
+      )
+    ),
+    .default = list(NULL)
+  ) |>
+    purrr::pluck(1)
+
+  if (!inherits(loaded_object, "data.frame")) {
+    show_error_and_stop(
+      paste0("The ", input_name, " input must contain one data frame / tibble.")
+    )
+  }
+
+  list(
+    data_raw = loaded_object,
+    already_cleaned = stringr::str_detect(storage_state, "^Already-cleaned|already-cleaned")
+  )
+}
+
+validate_column_map <- function(column_map, input_name) {
+  if (length(unique(unname(column_map))) != length(column_map)) {
+    show_error_and_stop(
+      paste0(
+        "Please choose different columns for the ",
+        input_name,
+        " mappings."
+      )
+    )
+  }
+
+  invisible(column_map)
+}
+
+choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
+  input_window <- tktoplevel()
+  tkwm.title(input_window, paste("Choose", input_name, "columns for the analysis"))
+
+  intro_text <- paste(
+    "These are the columns found in the input:",
+    paste(names(data_input), collapse = ", "),
+    "",
+    "Choose which columns should be used for the analysis.",
+    sep = "\n"
+  )
+
+  tkgrid(
+    ttklabel(
+      input_window,
+      text = intro_text,
+      justify = "left",
+      wraplength = 700
+    ),
+    columnspan = 2,
+    padx = 10,
+    pady = 10,
+    sticky = "w"
+  )
+
+  input_choices <- names(data_input)
+
+  dataset_var <- tclVar(input_choices[[1]])
+  doi_var <- tclVar(input_choices[[1]])
+
+  tkgrid(
+    ttklabel(input_window, text = "Column to use as original dataset identifier:"),
+    ttkcombobox(input_window, textvariable = dataset_var, values = input_choices, state = "readonly", width = 30),
+    padx = 10,
+    pady = 4,
+    sticky = "w"
+  )
+
+  if (already_cleaned) {
+    dataset_clean_var <- tclVar(input_choices[[1]])
+
+    tkgrid(
+      ttklabel(input_window, text = "Column to use as cleaned dataset identifier:"),
+      ttkcombobox(input_window, textvariable = dataset_clean_var, values = input_choices, state = "readonly", width = 30),
+      padx = 10,
+      pady = 4,
+      sticky = "w"
+    )
+  }
+
+  tkgrid(
+    ttklabel(input_window, text = "Column to use as article DOI:"),
+    ttkcombobox(input_window, textvariable = doi_var, values = input_choices, state = "readonly", width = 30),
+    padx = 10,
+    pady = 4,
+    sticky = "w"
+  )
+
+  input_done <- tclVar(0)
+
+  tkgrid(
+    ttkbutton(input_window, text = "OK", command = function() tclvalue(input_done) <- 1),
+    padx = 10,
+    pady = 10,
+    sticky = "w"
+  )
+
+  tkwait.variable(input_done)
+
+  column_map <- if (already_cleaned) {
+    c(
+      dataset = tclvalue(dataset_var),
+      dataset_clean = tclvalue(dataset_clean_var),
+      doi = tclvalue(doi_var)
+    )
+  } else {
+    c(
+      dataset = tclvalue(dataset_var),
+      doi = tclvalue(doi_var)
+    )
+  }
+
+  tkdestroy(input_window)
+
+  validate_column_map(
+    column_map = column_map,
+    input_name = input_name
+  )
+
+  column_map
+}
+
+filter_oddpub_open_datasets <- function(data_input) {
+  default_filter_columns <- intersect(
+    c("data_access", "own_or_reuse_data", "open_data_assessment"),
+    names(data_input)
+  )
+
+  selected_filter_columns <- tcltk::tk_select.list(
+    choices = names(data_input),
+    preselect = default_filter_columns,
+    multiple = TRUE,
+    title = "Select the ODDPub columns that define whether a dataset is open"
+  )
+
+  if (length(selected_filter_columns) == 0) {
+    show_error_and_stop(
+      "Please select at least one column for the 'open dataset' filter."
+    )
+  }
+
+  combination_table <- data_input |>
+    dplyr::count(
+      dplyr::across(all_of(selected_filter_columns)),
+      name = ".n",
+      sort = TRUE
+    )
+
+  combination_labels <- combination_table |>
+    dplyr::select(all_of(selected_filter_columns)) |>
+    purrr::pmap_chr(
+      \(...) {
+        row_values <- list(...)
+
+        value_text <- row_values |>
+          purrr::map_chr(\(value) {
+            dplyr::coalesce(as.character(value), "<NA>")
+          })
+
+        selected_filter_columns |>
+          purrr::map2_chr(
+            value_text,
+            \(column_name, value_name) {
+              paste0(column_name, " = ", value_name)
+            }
+          ) |>
+          paste(collapse = "; ")
+      }
+    )
+
+  combination_table <- combination_table |>
+    dplyr::mutate(
+      .label = paste0("[n = ", .n, "] ", combination_labels)
+    )
+
+  selected_combination_labels <- tcltk::tk_select.list(
+    choices = combination_table$.label,
+    multiple = TRUE,
+    title = "Select the value-combinations to keep in the ODDPub data"
+  )
+
+  if (length(selected_combination_labels) == 0) {
+    show_error_and_stop(
+      "Please select at least one value-combination to keep."
+    )
+  }
+
+  selected_combinations <- combination_table |>
+    dplyr::filter(.label %in% selected_combination_labels) |>
+    dplyr::select(-.n, -.label)
+
+  data_filtered <- data_input |>
+    dplyr::semi_join(
+      selected_combinations,
+      by = selected_filter_columns
+    )
+
+  if (nrow(data_filtered) == 0) {
+    tcltk::tkmessageBox(
+      title = "No rows kept",
+      message = "The selected combinations kept 0 rows in the ODDPub data.",
+      icon = "warning",
+      type = "ok"
+    )
+  }
+
+  data_filtered
+}
+
+prepare_input_data <- function(
+  data_raw,
+  column_map,
+  already_cleaned,
+  dataset_name,
+  output_folder,
+  is_dcc = FALSE
+) {
+  data_raw_renamed <- data_raw |>
+    dplyr::rename_with(
+      ~ names(column_map),
+      .cols = all_of(unname(column_map))
+    )
+
+  data_clean <- if (already_cleaned) {
+    data_raw_renamed |>
+      dplyr::relocate(dataset_clean, .after = dataset)
+  } else {
+    data_clean_col <- dataset_cleaner(
+      input = data_raw_renamed |>
+        dplyr::select(dataset) |>
+        distinct(),
+      dataset_name = dataset_name,
+      output_folder = output_folder
+    )
+
+    data_raw_renamed |>
+      dplyr::left_join(
+        data_clean_col |>
+          dplyr::select(dataset, dataset_clean),
+        by = "dataset"
+      ) |>
+      dplyr::relocate(dataset_clean, .after = dataset)
+  }
+
+  if (!"dataset_clean" %in% names(data_clean)) {
+    show_error_and_stop("The prepared input does not contain a dataset_clean column.")
+  }
+
+  if (is_dcc) {
+    data_clean <- data_clean |>
+      dplyr::filter(
+        doi != dataset_clean,
+        doi != dataset
+      )
+  }
+
+  list(
+    data_raw_renamed = data_raw_renamed,
+    data_clean = data_clean
+  )
+}
+
 ```
 
 ```{r choose_paths_and_load_data, echo=FALSE, include=FALSE}
+
+selected_sources <- tcltk::tk_select.list(
+  choices = c("ODDPub", "ROAGG", "DataStet"),
+  multiple = TRUE,
+  title = "Choose the sources to match with DCC"
+)
+
+if (length(selected_sources) == 0) {
+  show_error_and_stop("Please choose at least one source to match with DCC.")
+}
+
+source_slug_lookup <- c(
+  ODDPub = "oddpub",
+  ROAGG = "roagg",
+  DataStet = "datastet"
+)
 
 output_folder <- choose_one_folder(
   caption = "Choose the output folder"
@@ -153,371 +560,178 @@ output_folder <- choose_one_folder(
 derived_folder <- file.path(output_folder, "derived")
 dir.create(derived_folder, recursive = TRUE, showWarnings = FALSE)
 
-charite_input_path <- choose_one_file(
-  caption = "Choose the Charité datasets list file (RDS / RDA / RData)"
-)
+source_inputs <- selected_sources |>
+  purrr::set_names(source_slug_lookup[selected_sources]) |>
+  purrr::imap(
+    \(source_name, source_slug) {
+      storage_state <- choose_storage_state(
+        input_name = paste(source_name, "datasets list"),
+        is_dcc = FALSE
+      )
 
-data_raw_charite <- load_r_object_file(
-  file_path = charite_input_path,
-  invalid_message = "Please make sure that the chosen file is a RDS / RDA file!",
-  derived_folder = derived_folder
-)
+      input_path <- choose_input_path(
+        input_name = paste(source_name, "datasets list"),
+        storage_state = storage_state
+      )
 
-if (!inherits(data_raw_charite, "data.frame")) {
-  show_error_and_stop("The Charité file must contain one data frame / tibble.")
-}
+      loaded_input <- load_input_data(
+        input_name = paste(source_name, "datasets list"),
+        storage_state = storage_state,
+        input_path = input_path,
+        derived_folder = derived_folder
+      )
 
-dcc_input_type <- tcltk::tk_select.list(
-  choices = c(
-    "RDS / RDA file",
-    "Folder with CSV files"
-  ),
-  multiple = FALSE,
-  title = "Choose the DCC input type"
-)
+      data_raw <- loaded_input$data_raw
 
-if (identical(dcc_input_type, "")) {
-  show_error_and_stop("Please choose how the DCC is stored.")
-}
+      if (identical(source_name, "ODDPub")) {
+        data_raw <- filter_oddpub_open_datasets(data_raw)
+      }
 
-dcc_input_path <- if (identical(dcc_input_type, "Folder with CSV files")) {
-  choose_one_folder(
-    caption = "Choose the folder that contains the DCC CSV files"
-  )
-} else {
-  choose_one_file(
-    caption = "Choose the DCC file (RDS / RDA / RData)"
-  )
-}
+      column_map <- choose_column_map(
+        data_input = data_raw,
+        input_name = source_name,
+        already_cleaned = loaded_input$already_cleaned
+      )
 
-data_raw_dcc <- if (dir.exists(dcc_input_path)) {
-  if (!exists("dcc_csv_to_rds", mode = "function")) {
-    show_error_and_stop(
-      "The folder option was chosen, but dcc_csv_to_rds() is not available yet."
-    )
-  }
+      prepared_input <- prepare_input_data(
+        data_raw = data_raw,
+        column_map = column_map,
+        already_cleaned = loaded_input$already_cleaned,
+        dataset_name = paste0(source_slug, "_cleaning_steps"),
+        output_folder = file.path(derived_folder, source_slug),
+        is_dcc = FALSE
+      )
 
-  dcc_result <- dcc_csv_to_rds(dcc_input_path)
-
-  if (is.character(dcc_result) && length(dcc_result) == 1 && file.exists(dcc_result)) {
-    readRDS(dcc_result)
-  } else {
-    dcc_result
-  }
-} else {
-  load_r_object_file(
-    file_path = dcc_input_path,
-    invalid_message = "Please make sure that the chosen file is a RDS / RDA file or a path for the CSVs file!",
-    derived_folder = derived_folder
-  )
-}
-
-if (!inherits(data_raw_dcc, "data.frame")) {
-  show_error_and_stop("The DCC input must contain one data frame / tibble.")
-}
-
-```
-
-```{r get_charite_open_datasets, echo=FALSE, include=FALSE}
-
-default_filter_columns <- intersect(
-  c("data_access", "own_or_reuse_data", "open_data_assessment"),
-  names(data_raw_charite)
-)
-
-selected_filter_columns <- tcltk::tk_select.list(
-  choices = names(data_raw_charite),
-  preselect = default_filter_columns,
-  multiple = TRUE,
-  title = "Select the Charité columns that define whether a dataset is open"
-)
-
-if (length(selected_filter_columns) == 0) {
-  show_error_and_stop(
-    "Please select at least one column for the 'open dataset' filter."
-  )
-}
-
-combination_table <- data_raw_charite |>
-  dplyr::count(
-    dplyr::across(all_of(selected_filter_columns)),
-    name = ".n",
-    sort = TRUE
-  )
-
-combination_labels <- combination_table |>
-  dplyr::select(all_of(selected_filter_columns)) |>
-  purrr::pmap_chr(
-    \(...) {
-      row_values <- list(...)
-
-      value_text <- row_values |>
-        purrr::map_chr(\(value) {
-          dplyr::coalesce(as.character(value), "<NA>")
-        })
-
-      selected_filter_columns |>
-        purrr::map2_chr(
-          value_text,
-          \(column_name, value_name) {
-            paste0(column_name, " = ", value_name)
-          }
-        ) |>
-        paste(collapse = "; ")
+      list(
+        source_name = source_name,
+        source_slug = source_slug,
+        storage_state = storage_state,
+        input_path = input_path,
+        already_cleaned = loaded_input$already_cleaned,
+        data_raw = data_raw,
+        data_raw_renamed = prepared_input$data_raw_renamed,
+        data_clean = prepared_input$data_clean
+      )
     }
   )
 
-combination_table <- combination_table |>
-  dplyr::mutate(
-    .label = paste0("[n = ", .n, "] ", combination_labels)
-  )
-
-selected_combination_labels <- tcltk::tk_select.list(
-  choices = combination_table$.label,
-  multiple = TRUE,
-  title = "Select the value-combinations to keep in the Charité data"
+dcc_storage_state <- choose_storage_state(
+  input_name = "DCC",
+  is_dcc = TRUE
 )
 
-if (length(selected_combination_labels) == 0) {
-  show_error_and_stop(
-    "Please select at least one value-combination to keep."
-  )
-}
-
-selected_combinations <- combination_table |>
-  dplyr::filter(.label %in% selected_combination_labels) |>
-  dplyr::select(-.n, -.label)
-
-data_raw_charite <- data_raw_charite |>
-  dplyr::semi_join(
-    selected_combinations,
-    by = selected_filter_columns
-  )
-
-if (nrow(data_raw_charite) == 0) {
-  tcltk::tkmessageBox(
-    title = "No rows kept",
-    message = "The selected combinations kept 0 rows in the Charité data.",
-    icon = "warning",
-    type = "ok"
-  )
-}
-
-```
-
-```{r choose_analysis_columns, echo=FALSE, include=FALSE}
-
-charite_window <- tktoplevel()
-tkwm.title(charite_window, "Choose Charité columns for the analysis")
-
-charite_intro_text <- paste(
-  "Choose which columns should be used for each analysis column.",
-  sep = "\n"
+dcc_input_path <- choose_input_path(
+  input_name = "DCC",
+  storage_state = dcc_storage_state
 )
 
-tkgrid(
-  ttklabel(
-    charite_window,
-    text = charite_intro_text,
-    justify = "left",
-    wraplength = 700
-  ),
-  columnspan = 2,
-  padx = 10,
-  pady = 10,
-  sticky = "w"
+dcc_loaded_input <- load_input_data(
+  input_name = "DCC",
+  storage_state = dcc_storage_state,
+  input_path = dcc_input_path,
+  derived_folder = derived_folder
 )
 
-charite_choices <- names(data_raw_charite)
-
-charite_dataset_var <- tclVar(charite_choices[[1]])
-charite_doi_var <- tclVar(charite_choices[[1]])
-
-tkgrid(
-  ttklabel(charite_window, text = "Column to use as dataset identifier:"),
-  ttkcombobox(charite_window, textvariable = charite_dataset_var, values = charite_choices, state = "readonly", width = 30),
-  padx = 10,
-  pady = 4,
-  sticky = "w"
+dcc_column_map <- choose_column_map(
+  data_input = dcc_loaded_input$data_raw,
+  input_name = "DCC",
+  already_cleaned = dcc_loaded_input$already_cleaned
 )
 
-tkgrid(
-  ttklabel(charite_window, text = "Column to use as article DOI:"),
-  ttkcombobox(charite_window, textvariable = charite_doi_var, values = charite_choices, state = "readonly", width = 30),
-  padx = 10,
-  pady = 4,
-  sticky = "w"
-)
-
-charite_done <- tclVar(0)
-
-tkgrid(
-  ttkbutton(charite_window, text = "OK", command = function() tclvalue(charite_done) <- 1),
-  padx = 10,
-  pady = 10,
-  sticky = "w"
-)
-
-tkwait.variable(charite_done)
-
-charite_column_map <- c(
-  dataset = tclvalue(charite_dataset_var),
-  doi = tclvalue(charite_doi_var)
-)
-
-tkdestroy(charite_window)
-
-dcc_window <- tktoplevel()
-tkwm.title(dcc_window, "Choose DCC columns for the analysis")
-
-dcc_intro_text <- paste(
-  "These are the columns found in the DCC data:",
-  paste(names(data_raw_dcc), collapse = ", "),
-  "",
-  "Choose which raw DCC column should be used for each analysis column.",
-  sep = "\n"
-)
-
-tkgrid(
-  ttklabel(
-    dcc_window,
-    text = dcc_intro_text,
-    justify = "left",
-    wraplength = 700
-  ),
-  columnspan = 2,
-  padx = 10,
-  pady = 10,
-  sticky = "w"
-)
-
-dcc_choices <- names(data_raw_dcc)
-
-dcc_dataset_var <- tclVar(dcc_choices[[1]])
-dcc_doi_var <- tclVar(dcc_choices[[1]])
-
-tkgrid(
-  ttklabel(dcc_window, text = "Column to use as dataset identifier:"),
-  ttkcombobox(dcc_window, textvariable = dcc_dataset_var, values = dcc_choices, state = "readonly", width = 30),
-  padx = 10,
-  pady = 4,
-  sticky = "w"
-)
-
-tkgrid(
-  ttklabel(dcc_window, text = "Column to use as article DOI:"),
-  ttkcombobox(dcc_window, textvariable = dcc_doi_var, values = dcc_choices, state = "readonly", width = 30),
-  padx = 10,
-  pady = 4,
-  sticky = "w"
-)
-
-dcc_done <- tclVar(0)
-
-tkgrid(
-  ttkbutton(dcc_window, text = "OK", command = function() tclvalue(dcc_done) <- 1),
-  padx = 10,
-  pady = 10,
-  sticky = "w"
-)
-
-tkwait.variable(dcc_done)
-
-dcc_column_map <- c(
-  dataset = tclvalue(dcc_dataset_var),
-  doi = tclvalue(dcc_doi_var)
-)
-
-tkdestroy(dcc_window)
-
-```
-
-```{r rename_and_clean, echo=FALSE, include=FALSE}
-
-# The user has selected the "DOI" and "Dataset" columns. Here we will rename them:
-
-data_raw_charite_renamed <- data_raw_charite |>
-  dplyr::rename_with(
-    ~ names(charite_column_map),
-    .cols = all_of(unname(charite_column_map))
-  ) # ODDPub
-
-data_raw_dcc_renamed <- data_raw_dcc |>
-  dplyr::rename_with(
-    ~ names(dcc_column_map),
-    .cols = all_of(unname(dcc_column_map))
-  ) # DCC
-
-# Here we will apply the dataset_cleaner function in order to get the cleanest dataset identifier possible from each input:
-
-charite_data_clean_col <- dataset_cleaner(
-  input = data_raw_charite_renamed |>
-    dplyr::select(dataset) |> 
-    distinct(),
-  dataset_name = "charite_cleaning_steps",
-  output_folder = file.path(derived_folder, "charite")
-) # ODDPub
-
-dcc_data_clean_col <- dataset_cleaner(
-  input = data_raw_dcc_renamed |>
-    dplyr::select(dataset) |> 
-    distinct(),
+dcc_prepared_input <- prepare_input_data(
+  data_raw = dcc_loaded_input$data_raw,
+  column_map = dcc_column_map,
+  already_cleaned = dcc_loaded_input$already_cleaned,
   dataset_name = "dcc_cleaning_steps",
-  output_folder = file.path(derived_folder, "dcc")
-) # DCC
+  output_folder = file.path(derived_folder, "dcc"),
+  is_dcc = TRUE
+)
 
-# And below we will join the clean dataset identifiers back to the original input tables
-
-charite_data_clean <- data_raw_charite_renamed |>
-  dplyr::left_join(
-    charite_data_clean_col |>
-      dplyr::select(dataset, dataset_clean),
-    by = "dataset"
-  ) |>
-  dplyr::relocate(dataset_clean, .after = dataset) # ODDPub
-
-dcc_data_clean <- data_raw_dcc_renamed |>
-  dplyr::left_join(
-    dcc_data_clean_col |>
-      dplyr::select(dataset, dataset_clean),
-    by = "dataset"
-  ) |>
-  dplyr::relocate(dataset_clean, .after = dataset) |> 
-  dplyr::filter(
-    doi != dataset_clean,
-    doi != dataset
-  ) # DCC (also: remove cases where the doi value is the same as the original / clean dataset value)
+data_raw_dcc <- dcc_loaded_input$data_raw
+data_raw_dcc_renamed <- dcc_prepared_input$data_raw_renamed
+dcc_data_clean <- dcc_prepared_input$data_clean
 
 ```
 
-Successfully loaded Charité and DCC dataset identifiers lists! Charité has a unique number of **`r charite_data_clean |> dplyr::summarise(n = dplyr::n_distinct(dataset)) |> dplyr::pull(n)`** datasets, and DCC has a unique number of **`r dcc_data_clean |> dplyr::summarise(n = dplyr::n_distinct(dataset)) |> dplyr::pull(n)`** datasets.
+Successfully loaded the selected source dataset identifier lists and the DCC dataset identifier list.
 
-```{r match_and_clean, echo=FALSE, warning=FALSE}
+```{r match_and_clean, echo=FALSE, warning=FALSE, include=FALSE}
 
-charite_dcc_joined <- charite_data_clean |>
-  dplyr::inner_join(
-    dcc_data_clean,
-    by = "dataset_clean",
-    suffix = c("_charite", "_dcc")
+dcc_join_ready <- dcc_data_clean |>
+  dplyr::rename(
+    dataset_dcc = dataset,
+    doi_dcc = doi
   )
 
-charite_dcc_joined_dedup <- charite_dcc_joined |>
-  dplyr::distinct()
+source_matches <- source_inputs |>
+  purrr::imap(
+    \(source_input, source_slug) {
+      joined <- source_input$data_clean |>
+        dplyr::rename(
+          dataset_source = dataset,
+          doi_source = doi
+        ) |>
+        dplyr::mutate(source = source_input$source_name) |>
+        dplyr::inner_join(
+          dcc_join_ready,
+          by = "dataset_clean",
+          suffix = c("_source", "_dcc")
+        ) |>
+        dplyr::select(
+          source,
+          dataset_clean,
+          dataset_source,
+          dataset_dcc,
+          doi_source,
+          doi_dcc,
+          dplyr::everything()
+        )
+
+      list(
+        joined = joined,
+        joined_dedup = joined |>
+          dplyr::distinct()
+      )
+    }
+  )
+
+all_sources_dcc_joined <- source_matches |>
+  purrr::map("joined") |>
+  dplyr::bind_rows()
+
+all_sources_dcc_joined_dedup <- source_matches |>
+  purrr::map("joined_dedup") |>
+  dplyr::bind_rows()
 
 ```
 
-```{r save objects, echo=FALSE}
+```{r save_objects, echo=FALSE, include=FALSE}
 
 objects_to_save <- list(
-  data_raw_charite = data_raw_charite,
-  data_raw_charite_renamed = data_raw_charite_renamed,
   data_raw_dcc = data_raw_dcc,
   data_raw_dcc_renamed = data_raw_dcc_renamed,
-  charite_data_clean = charite_data_clean,
-  dcc_data_clean = dcc_data_clean,
-  charite_dcc_joined = charite_dcc_joined,
-  charite_dcc_joined_dedup = charite_dcc_joined_dedup
+  dcc_data_clean = dcc_data_clean
 )
+
+source_inputs |>
+  purrr::iwalk(
+    \(source_input, source_slug) {
+      objects_to_save[[paste0("data_raw_", source_slug)]] <<- source_input$data_raw
+      objects_to_save[[paste0("data_raw_", source_slug, "_renamed")]] <<- source_input$data_raw_renamed
+      objects_to_save[[paste0(source_slug, "_data_clean")]] <<- source_input$data_clean
+    }
+  )
+
+source_matches |>
+  purrr::iwalk(
+    \(source_match, source_slug) {
+      objects_to_save[[paste0(source_slug, "_dcc_joined")]] <<- source_match$joined
+      objects_to_save[[paste0(source_slug, "_dcc_joined_dedup")]] <<- source_match$joined_dedup
+    }
+  )
+
+objects_to_save[["all_sources_dcc_joined"]] <- all_sources_dcc_joined
+objects_to_save[["all_sources_dcc_joined_dedup"]] <- all_sources_dcc_joined_dedup
 
 purrr::iwalk(
   objects_to_save,
@@ -531,38 +745,53 @@ purrr::iwalk(
 
 ```
 
-```{r count, echo=FALSE}
+```{r count, echo=FALSE, include=FALSE}
 
-joined_counts <- tibble::tibble(
+source_counts <- source_inputs |>
+  purrr::map_dfr(
+    \(source_input) {
+      tibble::tibble(
+        Metric = c(
+          paste(source_input$source_name, "Articles"),
+          paste(source_input$source_name, "Datasets")
+        ),
+        `Unique Count` = c(
+          source_input$data_clean |>
+            dplyr::summarise(n = dplyr::n_distinct(doi, na.rm = TRUE)) |>
+            dplyr::pull(n),
+          source_input$data_clean |>
+            dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |>
+            dplyr::pull(n)
+        )
+      )
+    }
+  )
+
+dcc_counts <- tibble::tibble(
   Metric = c(
-    "Charité Articles",
-    "Charité Datasets",
     "DCC Mentioning Articles",
     "DCC Mentions",
     "DCC Datasets"
   ),
   `Unique Count` = c(
-    charite_data_clean |>
-      dplyr::summarise(n = dplyr::n_distinct(doi, na.rm = TRUE)) |>
-      dplyr::pull(n),
-    
-    charite_data_clean |>
-      dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |>
-      dplyr::pull(n),
-    
     dcc_data_clean |>
       dplyr::summarise(n = dplyr::n_distinct(doi, na.rm = TRUE)) |>
       dplyr::pull(n),
-    
+
     dcc_data_clean |>
       dplyr::distinct(doi, dataset_clean) |>
       dplyr::summarise(n = dplyr::n()) |>
       dplyr::pull(n),
-    
+
     dcc_data_clean |>
       dplyr::summarise(n = dplyr::n_distinct(dataset_clean, na.rm = TRUE)) |>
       dplyr::pull(n)
   )
+)
+
+joined_counts <- dplyr::bind_rows(
+  source_counts,
+  dcc_counts
 )
 
 ```
@@ -580,77 +809,8 @@ DT::datatable(
   ),
   caption = htmltools::tags$caption(
     style = "caption-side: top; text-align: left;",
-    "Summary of distinct counts from each of the inputs"
+    "Summary of distinct counts from the selected source inputs and DCC"
   )
 )
 
-```
-
-```{r plot-charite-year-counts, echo=FALSE}
-# charite_year_counts <- prep_charite_year_counts(charite_data_clean)
-```
-
-```{r plot-charite-year-counts-fig, echo=FALSE}
-# #| fig-width: !expr plot_width_from_n_x_values(nrow(charite_year_counts))
-# #| fig-height: 6
-
-# plot_charite_year_counts(charite_year_counts)
-```
-
-```{r plot-charite-dataset-freq, echo=FALSE}
-# charite_dataset_freq <- prep_charite_dataset_frequency(charite_data_clean)
-```
-
-```{r plot-charite-dataset-freq-fig, echo=FALSE}
-# #| fig-width: 8
-# #| fig-height: 6
-# 
-# plot_charite_dataset_frequency(charite_dataset_freq)
-```
-
-```{r plot-dcc-reference-freq, echo=FALSE}
-# dcc_reference_freq <- prep_dcc_reference_frequency(
-#   dcc_data_clean,
-#   doi_col = "doi"
-# )
-```
-
-```{r plot-dcc-reference-freq-fig, echo=FALSE}
-# #| fig-width: 8
-# #| fig-height: 6
-
-# plot_dcc_reference_frequency(dcc_reference_freq)
-```
-
-```{r plot-matched-reference-freq, echo=FALSE}
-# matched_reference_freq <- prep_matched_reference_frequency(
-#   charite_dcc_joined_dedup,
-#   doi_col = "doi_dcc"
-# )
-```
-
-```{r plot-matched-reference-freq-fig, echo=FALSE, warning=FALSE}
-# #| fig-width: 8
-# #| fig-height: 6
-
-# plot_matched_reference_frequency(matched_reference_freq)
-```
-
-```{r plot-matched-repo-counts, echo=FALSE}
-# matched_repo_counts <- prep_repository_counts(
-#   charite_dcc_joined_dedup,
-#   repository_col = "repository",
-#   dataset_col = "dataset_clean",
-#   doi_col = "doi_dcc"
-# )
-```
-
-```{r plot-matched-repo-counts-fig, echo=FALSE}
-# #| fig-width: 10
-# #| fig-height: !expr plot_height_from_n_categories(nrow(matched_repo_counts))
-
-# plot_repository_counts(
-#   matched_repo_counts,
-#   y_label = "Number of matched references (log scale)"
-# )
 ```
