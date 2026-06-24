@@ -940,8 +940,6 @@ dataset_cleaner <- function(input, dataset_name, output_folder) {
   save_step_rds(data_results_12_rm_versions, "_12_rm_versions")
   step_done(12L, nrow(data_results_12_rm_versions))
   
-  data_results_12_rm_versions
-  
   step_start(13L, "Remove trailing slashes")
   
   data_results_13_rm_trailing_slash <- data_results_12_rm_versions |>
@@ -953,5 +951,7 @@ dataset_cleaner <- function(input, dataset_name, output_folder) {
   
   save_step_rds(data_results_13_rm_trailing_slash, "_13_rm_trailing_slash")
   step_done(13L, nrow(data_results_13_rm_trailing_slash))
+  
+  data_results_13_rm_trailing_slash
   
 }

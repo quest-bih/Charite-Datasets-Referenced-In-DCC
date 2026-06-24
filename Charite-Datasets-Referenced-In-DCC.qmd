@@ -12,16 +12,26 @@ editor: source
 
 Sys.setenv(LANG = "EN")
 
+# Load the required packages
+
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 library(pacman)
 pacman::p_load(tidyverse, DT, patchwork, RColorBrewer, here, tcltk, networkD3, lubridate)
 
+# Source external helper scripts from the R folder
 list.files("R", pattern = "\\.R$", full.names = TRUE) |>
   purrr::walk(source)
+
+# Record the render start time so the total runtime can be documented at
+# the end of the qmd.
+render_start <- Sys.time()
 
 ```
 
 ```{r helper_functions, echo=FALSE, include=FALSE}
+
+# Show a GUI error message and stop the document immediately.
+# Use this only for problems that should abort the current workflow.
 
 show_error_and_stop <- function(message_text) {
   tcltk::tkmessageBox(
@@ -34,6 +44,9 @@ show_error_and_stop <- function(message_text) {
   stop(message_text, call. = FALSE)
 }
 
+# Normalize file/folder paths returned by tcltk.
+# This removes braces and converts the selection to one clean character path.
+
 normalize_tk_path <- function(path_choice) {
   if (length(path_choice) == 0 || all(is.na(path_choice))) {
     return("")
@@ -44,6 +57,8 @@ normalize_tk_path <- function(path_choice) {
     paste(collapse = " ") |>
     stringr::str_replace_all("^\\{|\\}$", "")
 }
+
+# Ask the user to choose exactly one folder. Stop immediately if no folder was selected.
 
 choose_one_file <- function(caption) {
   chosen_path <- tcltk::tk_choose.files(
@@ -71,6 +86,10 @@ choose_one_folder <- function(caption) {
 
   chosen_path
 }
+
+# Load an .rda / .RData file into a temporary environment and return the
+# dataset object from it.
+# This protects the global environment and makes sure only one dataset is used.
 
 rda_to_object <- function(file_path) {
   temp_env <- new.env(parent = emptyenv())
@@ -102,6 +121,9 @@ rda_to_object <- function(file_path) {
   )
 }
 
+# Save a converted or derived object as an .rds in the derived folder.
+# This keeps a stable saved version of intermediate inputs for later reuse.
+
 save_converted_rds <- function(data_object, source_path, derived_folder) {
   rds_path <- file.path(
     derived_folder,
@@ -112,6 +134,9 @@ save_converted_rds <- function(data_object, source_path, derived_folder) {
 
   rds_path
 }
+
+# Load an .rds / .rda / .RData file and return the dataset object.
+# If an .rda / .RData file is used, also save an .rds copy in the derived folder.
 
 load_r_object_file <- function(file_path, invalid_message, derived_folder = NULL) {
   file_ext <- file_path |>
@@ -139,6 +164,9 @@ load_r_object_file <- function(file_path, invalid_message, derived_folder = NULL
   show_error_and_stop(invalid_message)
 }
 
+# Load a single CSV file and immediately save an .rds copy in the derived folder.
+# This standardizes later processing around .rds objects.
+
 load_csv_file <- function(file_path, derived_folder) {
   loaded_object <- readr::read_csv(
     file_path,
@@ -153,6 +181,9 @@ load_csv_file <- function(file_path, derived_folder) {
 
   loaded_object
 }
+
+# Load DCC from a folder of CSV files using the external dcc_csv_to_rds() helper.
+# The function is expected to return either a data frame or a valid .rds path.
 
 load_dcc_csv_folder <- function(folder_path, derived_folder) {
   if (!exists("dcc_csv_to_rds", mode = "function")) {
@@ -184,6 +215,9 @@ load_dcc_csv_folder <- function(folder_path, derived_folder) {
     "dcc_csv_to_rds() did not return a data frame or a valid RDS path."
   )
 }
+
+# Ask the user how a given input is stored.
+# DCC supports folder-based CSV input, while the other sources use single files.
 
 choose_storage_state <- function(input_name, is_dcc = FALSE) {
   choice_options <- if (is_dcc) {
@@ -217,6 +251,9 @@ choose_storage_state <- function(input_name, is_dcc = FALSE) {
   chosen_state
 }
 
+# Ask the user for the actual path that matches the chosen storage state.
+# Folder-based inputs use folder selection; all others use file selection.
+
 choose_input_path <- function(input_name, storage_state) {
   if (stringr::str_detect(storage_state, "^Folder")) {
     return(
@@ -231,49 +268,42 @@ choose_input_path <- function(input_name, storage_state) {
   )
 }
 
+# Load the selected input according to the storage state chosen by the user.
+# This is the main entry point for reading a raw source file/folder into R.
+
 load_input_data <- function(input_name, storage_state, input_path, derived_folder) {
-  loaded_object <- dplyr::case_when(
-    identical(storage_state, "Raw RDS / RDA / RData") ~ list(
-      load_r_object_file(
-        file_path = input_path,
-        invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
-        derived_folder = derived_folder
-      )
+  loaded_object <- switch(
+    storage_state,
+    "Raw RDS / RDA / RData" = load_r_object_file(
+      file_path = input_path,
+      invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
+      derived_folder = derived_folder
     ),
-    identical(storage_state, "Already-cleaned RDS / RDA / RData") ~ list(
-      load_r_object_file(
-        file_path = input_path,
-        invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
-        derived_folder = derived_folder
-      )
+    "Already-cleaned RDS / RDA / RData" = load_r_object_file(
+      file_path = input_path,
+      invalid_message = "Please make sure that the chosen file is a RDS / RDA / RData file!",
+      derived_folder = derived_folder
     ),
-    identical(storage_state, "Raw CSV file") ~ list(
-      load_csv_file(
-        file_path = input_path,
-        derived_folder = derived_folder
-      )
+    "Raw CSV file" = load_csv_file(
+      file_path = input_path,
+      derived_folder = derived_folder
     ),
-    identical(storage_state, "Already-cleaned CSV file") ~ list(
-      load_csv_file(
-        file_path = input_path,
-        derived_folder = derived_folder
-      )
+    "Already-cleaned CSV file" = load_csv_file(
+      file_path = input_path,
+      derived_folder = derived_folder
     ),
-    identical(storage_state, "Folder with raw CSV files") ~ list(
-      load_dcc_csv_folder(
-        folder_path = input_path,
-        derived_folder = derived_folder
-      )
+    "Folder with raw CSV files" = load_dcc_csv_folder(
+      folder_path = input_path,
+      derived_folder = derived_folder
     ),
-    identical(storage_state, "Folder with already-cleaned CSV files") ~ list(
-      load_dcc_csv_folder(
-        folder_path = input_path,
-        derived_folder = derived_folder
-      )
+    "Folder with already-cleaned CSV files" = load_dcc_csv_folder(
+      folder_path = input_path,
+      derived_folder = derived_folder
     ),
-    .default = list(NULL)
-  ) |>
-    purrr::pluck(1)
+    show_error_and_stop(
+      paste0("Unsupported storage state for ", input_name, ".")
+    )
+  )
 
   if (!inherits(loaded_object, "data.frame")) {
     show_error_and_stop(
@@ -283,9 +313,219 @@ load_input_data <- function(input_name, storage_state, input_path, derived_folde
 
   list(
     data_raw = loaded_object,
-    already_cleaned = stringr::str_detect(storage_state, "^Already-cleaned|already-cleaned")
+    already_cleaned = storage_state %in% c(
+      "Already-cleaned RDS / RDA / RData",
+      "Already-cleaned CSV file",
+      "Folder with already-cleaned CSV files"
+    )
   )
 }
+
+# Show a GUI warning message but do not stop the document.
+# Use this for recoverable problems, such as rows removed during validation.
+
+show_warning_message <- function(title_text, message_text) {
+  tcltk::tkmessageBox(
+    title = title_text,
+    message = message_text,
+    icon = "warning",
+    type = "ok"
+  )
+
+  invisible(NULL)
+}
+
+# Log table for input-validation issues.
+# Each row documents one removed problematic value or one input-level validation problem.
+
+input_validation_log <- tibble::tibble(
+  input_name = character(),
+  row_id = integer(),
+  column_name = character(),
+  issue = character(),
+  value_preview = character()
+)
+
+# Safely convert text to UTF-8.
+# Values that cannot be converted can be replaced or flagged before further processing.
+
+to_utf8_safe <- function(x, sub_value = "") {
+  suppressWarnings(
+    iconv(
+      as.character(x),
+      from = "",
+      to = "UTF-8",
+      sub = sub_value
+    )
+  )
+}
+
+# Validate a loaded input before any downstream processing.
+# Logic:
+# 1. detect text values that cannot be converted to UTF-8
+# 2. remove the full rows that contain those values
+# 3. log the removed rows in input_validation_log
+# 4. save the cleaned validated input as an .rds
+# 5. return a status object so invalid inputs can be skipped cleanly
+
+validate_and_save_input_rds <- function(data_input, input_name, input_slug, derived_folder) {
+  validation_result <- tryCatch(
+    {
+      if (!inherits(data_input, "data.frame")) {
+        stop("The loaded object is not a data frame / tibble.", call. = FALSE)
+      }
+
+      data_with_row_id <- tibble::as_tibble(data_input) |>
+        dplyr::mutate(.input_row_id = dplyr::row_number())
+
+      text_columns <- names(data_with_row_id)[
+        purrr::map_lgl(
+          data_with_row_id,
+          \(x) is.character(x) || is.factor(x)
+        )
+      ]
+
+      invalid_cells <- dplyr::case_when(
+        length(text_columns) == 0 ~ list(
+          tibble::tibble(
+            input_name = character(),
+            row_id = integer(),
+            column_name = character(),
+            issue = character(),
+            value_preview = character()
+          )
+        ),
+        .default = list(
+          data_with_row_id |>
+            dplyr::select(.input_row_id, dplyr::all_of(text_columns)) |>
+            dplyr::mutate(
+              dplyr::across(
+                dplyr::all_of(text_columns),
+                as.character
+              )
+            ) |>
+            tidyr::pivot_longer(
+              cols = -.input_row_id,
+              names_to = "column_name",
+              values_to = "cell_value"
+            ) |>
+            dplyr::mutate(
+              utf8_value = to_utf8_safe(cell_value, sub_value = NA_character_),
+              invalid_text = !is.na(cell_value) & is.na(utf8_value)
+            ) |>
+            dplyr::filter(invalid_text) |>
+            dplyr::transmute(
+              input_name = input_name,
+              row_id = .input_row_id,
+              column_name = column_name,
+              issue = "Value could not be converted to UTF-8. The full row was removed before further processing.",
+              value_preview = dplyr::case_when(
+                !is.na(cell_value) ~ "<invalid text>",
+                .default = "<NA>"
+              )
+            )
+        )
+      ) |>
+        purrr::pluck(1)
+
+      rows_to_drop <- invalid_cells |>
+        dplyr::distinct(row_id)
+
+      data_validated <- data_with_row_id |>
+        dplyr::mutate(
+          dplyr::across(
+            dplyr::all_of(text_columns),
+            \(x) to_utf8_safe(x, sub_value = "")
+          )
+        ) |>
+        dplyr::filter(!.input_row_id %in% rows_to_drop$row_id) |>
+        dplyr::select(-.input_row_id)
+
+      input_validation_log <<- dplyr::bind_rows(
+        input_validation_log,
+        invalid_cells
+      )
+
+      removed_n <- nrow(rows_to_drop)
+
+      dplyr::case_when(
+        removed_n > 0 ~ show_warning_message(
+          title_text = paste(input_name, "cleaned"),
+          message_text = paste(
+            removed_n,
+            "row(s) with text/encoding problems were removed from",
+            input_name,
+            "and logged in input_validation_log.csv."
+          )
+        ),
+        .default = invisible(NULL)
+      )
+
+      if (nrow(data_validated) == 0) {
+        show_warning_message(
+          title_text = paste(input_name, "skipped"),
+          message_text = paste(
+            "After removing invalid rows, no usable rows remained in",
+            input_name,
+            ". This input will be skipped."
+          )
+        )
+
+        return(
+          list(
+            valid = FALSE,
+            data = NULL,
+            rds_path = NA_character_
+          )
+        )
+      }
+
+      validated_rds_path <- file.path(
+        derived_folder,
+        paste0(input_slug, "_validated_input.rds")
+      )
+
+      saveRDS(data_validated, validated_rds_path)
+
+      list(
+        valid = TRUE,
+        data = data_validated,
+        rds_path = validated_rds_path
+      )
+    },
+    error = \(e) {
+      show_warning_message(
+        title_text = paste(input_name, "skipped"),
+        message_text = paste(
+          "This input could not be validated and will be skipped.",
+          conditionMessage(e)
+        )
+      )
+
+      input_validation_log <<- dplyr::bind_rows(
+        input_validation_log,
+        tibble::tibble(
+          input_name = input_name,
+          row_id = NA_integer_,
+          column_name = NA_character_,
+          issue = conditionMessage(e),
+          value_preview = NA_character_
+        )
+      )
+
+      list(
+        valid = FALSE,
+        data = NULL,
+        rds_path = NA_character_
+      )
+    }
+  )
+
+  validation_result
+}
+
+# Check that the user did not map the same raw column to multiple analysis roles.
+# This prevents ambiguous renaming later in the workflow.
 
 validate_column_map <- function(column_map, input_name) {
   if (length(unique(unname(column_map))) != length(column_map)) {
@@ -301,15 +541,22 @@ validate_column_map <- function(column_map, input_name) {
   invisible(column_map)
 }
 
+# Ask the user which columns should be treated as:
+# - original dataset identifier
+# - cleaned dataset identifier (for already-clean inputs only)
+# - article DOI, or "No article DOI column"
+# This keeps the qmd flexible across differently structured source files.
+
 choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
+  no_doi_choice <- "No article DOI column"
+
   input_window <- tktoplevel()
   tkwm.title(input_window, paste("Choose", input_name, "columns for the analysis"))
 
   intro_text <- paste(
-    "These are the columns found in the input:",
-    paste(names(data_input), collapse = ", "),
-    "",
     "Choose which columns should be used for the analysis.",
+    "The full list of columns is available in the drop-down menus below.",
+    "If the input does not contain an article DOI column, choose 'No article DOI column'.",
     sep = "\n"
   )
 
@@ -327,9 +574,10 @@ choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
   )
 
   input_choices <- names(data_input)
+  doi_choices <- c(no_doi_choice, input_choices)
 
   dataset_var <- tclVar(input_choices[[1]])
-  doi_var <- tclVar(input_choices[[1]])
+  doi_var <- tclVar(no_doi_choice)
 
   tkgrid(
     ttklabel(input_window, text = "Column to use as original dataset identifier:"),
@@ -353,7 +601,7 @@ choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
 
   tkgrid(
     ttklabel(input_window, text = "Column to use as article DOI:"),
-    ttkcombobox(input_window, textvariable = doi_var, values = input_choices, state = "readonly", width = 30),
+    ttkcombobox(input_window, textvariable = doi_var, values = doi_choices, state = "readonly", width = 30),
     padx = 10,
     pady = 4,
     sticky = "w"
@@ -370,16 +618,24 @@ choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
 
   tkwait.variable(input_done)
 
+  doi_choice <- tclvalue(doi_var)
+
   column_map <- if (already_cleaned) {
     c(
       dataset = tclvalue(dataset_var),
       dataset_clean = tclvalue(dataset_clean_var),
-      doi = tclvalue(doi_var)
+      doi = dplyr::case_when(
+        identical(doi_choice, no_doi_choice) ~ ".no_article_doi_column",
+        .default = doi_choice
+      )
     )
   } else {
     c(
       dataset = tclvalue(dataset_var),
-      doi = tclvalue(doi_var)
+      doi = dplyr::case_when(
+        identical(doi_choice, no_doi_choice) ~ ".no_article_doi_column",
+        .default = doi_choice
+      )
     )
   }
 
@@ -392,6 +648,10 @@ choose_column_map <- function(data_input, input_name, already_cleaned = FALSE) {
 
   column_map
 }
+
+# ODDPub-specific filtering step.
+# The user first defines which columns indicate "open dataset" status, and then
+# selects which value-combinations should be kept in the ODDPub input.
 
 filter_oddpub_open_datasets <- function(data_input) {
   default_filter_columns <- intersect(
@@ -480,6 +740,95 @@ filter_oddpub_open_datasets <- function(data_input) {
   data_filtered
 }
 
+# ROAGG-specific filtering step.
+# Logic:
+# 1. if resourceType exists, keep only Dataset rows
+# 2. if publicationYear exists, let the user choose which years to keep
+
+filter_roagg_input <- function(data_input) {
+  data_filtered <- data_input
+
+  if ("resourceType" %in% names(data_filtered)) {
+    data_filtered <- data_filtered |>
+      dplyr::filter(
+        stringr::str_to_lower(as.character(resourceType)) == "dataset"
+      )
+
+    if (nrow(data_filtered) == 0) {
+      tcltk::tkmessageBox(
+        title = "No rows kept",
+        message = "Filtering ROAGG to resourceType = Dataset kept 0 rows.",
+        icon = "warning",
+        type = "ok"
+      )
+    }
+  }
+
+  if ("publicationYear" %in% names(data_filtered)) {
+    publication_year_choices <- data_filtered |>
+      dplyr::distinct(publicationYear) |>
+      dplyr::mutate(
+        publicationYear_chr = as.character(publicationYear)
+      ) |>
+      dplyr::filter(
+        !is.na(publicationYear_chr),
+        publicationYear_chr != ""
+      ) |>
+      dplyr::mutate(
+        publicationYear_num = suppressWarnings(as.numeric(publicationYear_chr))
+      ) |>
+      dplyr::arrange(publicationYear_num, publicationYear_chr) |>
+      dplyr::pull(publicationYear_chr)
+
+    if (length(publication_year_choices) > 0) {
+      selected_publication_years <- tcltk::tk_select.list(
+        choices = publication_year_choices,
+        preselect = publication_year_choices,
+        multiple = TRUE,
+        title = paste(
+          "Select the ROAGG publicationYear values to keep",
+          "(you can select one year, several years, or a range)",
+          sep = "\n"
+        )
+      )
+
+      if (length(selected_publication_years) == 0) {
+        show_error_and_stop(
+          "Please select at least one publicationYear value for the ROAGG input."
+        )
+      }
+
+      data_filtered <- data_filtered |>
+        dplyr::mutate(
+          publicationYear_chr = as.character(publicationYear)
+        ) |>
+        dplyr::filter(
+          publicationYear_chr %in% selected_publication_years
+        ) |>
+        dplyr::select(-publicationYear_chr)
+
+      if (nrow(data_filtered) == 0) {
+        tcltk::tkmessageBox(
+          title = "No rows kept",
+          message = "Filtering ROAGG by the selected publicationYear values kept 0 rows.",
+          icon = "warning",
+          type = "ok"
+        )
+      }
+    }
+  }
+
+  data_filtered
+}
+
+# Prepare one input for matching.
+# Logic:
+# 1. rename the user-selected raw columns to the standard analysis names
+# 2. create a missing DOI column when the user selected "No article DOI column"
+# 3. run dataset_cleaner() only for raw inputs
+# 4. keep already-cleaned inputs as-is
+# 5. return both the renamed raw table and the cleaned table
+
 prepare_input_data <- function(
   data_raw,
   column_map,
@@ -488,7 +837,16 @@ prepare_input_data <- function(
   output_folder,
   is_dcc = FALSE
 ) {
-  data_raw_renamed <- data_raw |>
+  dir.create(output_folder, recursive = TRUE, showWarnings = FALSE)
+
+  data_raw_for_rename <- if (".no_article_doi_column" %in% unname(column_map)) {
+    data_raw |>
+      dplyr::mutate(.no_article_doi_column = NA_character_)
+  } else {
+    data_raw
+  }
+
+  data_raw_renamed <- data_raw_for_rename |>
     dplyr::rename_with(
       ~ names(column_map),
       .cols = all_of(unname(column_map))
@@ -498,13 +856,50 @@ prepare_input_data <- function(
     data_raw_renamed |>
       dplyr::relocate(dataset_clean, .after = dataset)
   } else {
+    cleaner_input <- data_raw_renamed |>
+      dplyr::select(dataset) |>
+      dplyr::distinct()
+
+    if (nrow(cleaner_input) == 0) {
+      show_error_and_stop(
+        paste0(
+          "The input for ",
+          dataset_name,
+          " has 0 rows before dataset_cleaner() runs. ",
+          "Check the previous filtering and the selected dataset column."
+        )
+      )
+    }
+
     data_clean_col <- dataset_cleaner(
-      input = data_raw_renamed |>
-        dplyr::select(dataset) |>
-        distinct(),
+      input = cleaner_input,
       dataset_name = dataset_name,
       output_folder = output_folder
     )
+
+    if (is.null(data_clean_col) || !inherits(data_clean_col, "data.frame")) {
+      show_error_and_stop(
+        paste0(
+          "dataset_cleaner() returned NULL or a non-data-frame object for ",
+          dataset_name,
+          ". It must return a data frame with columns 'dataset' and 'dataset_clean'."
+        )
+      )
+    }
+
+    required_columns <- c("dataset", "dataset_clean")
+
+    if (!all(required_columns %in% names(data_clean_col))) {
+      show_error_and_stop(
+        paste0(
+          "dataset_cleaner() output for ",
+          dataset_name,
+          " must contain these columns: ",
+          paste(required_columns, collapse = ", "),
+          "."
+        )
+      )
+    }
 
     data_raw_renamed |>
       dplyr::left_join(
@@ -537,6 +932,10 @@ prepare_input_data <- function(
 
 ```{r choose_paths_and_load_data, echo=FALSE, include=FALSE}
 
+# In this chunk we collect all user choices, validate all inputs, skip invalid ones, and create standardized source and DCC tables for later matching.
+
+# Step 1: ask which source inputs should be matched against DCC.
+
 selected_sources <- tcltk::tk_select.list(
   choices = c("ODDPub", "ROAGG", "DataStet"),
   multiple = TRUE,
@@ -547,18 +946,34 @@ if (length(selected_sources) == 0) {
   show_error_and_stop("Please choose at least one source to match with DCC.")
 }
 
+# Step 2: create a lookup from display names to compact internal source names.
+
 source_slug_lookup <- c(
   ODDPub = "oddpub",
   ROAGG = "roagg",
   DataStet = "datastet"
 )
 
+# Step 3: ask where all derived outputs should be written.
+
 output_folder <- choose_one_folder(
   caption = "Choose the output folder"
 )
 
+# Step 4: create the derived folder once so all saved intermediate files go to
+# a consistent location.
+
 derived_folder <- file.path(output_folder, "derived")
 dir.create(derived_folder, recursive = TRUE, showWarnings = FALSE)
+
+# Step 5: loop over the selected sources.
+# For each source:
+# - ask how it is stored
+# - load it
+# - validate and save a validated .rds copy
+# - apply source-specific filters
+# - ask the user which columns to use
+# - keep only the information needed for later preparation
 
 source_inputs <- selected_sources |>
   purrr::set_names(source_slug_lookup[selected_sources]) |>
@@ -582,9 +997,27 @@ source_inputs <- selected_sources |>
       )
 
       data_raw <- loaded_input$data_raw
+      
+      validated_input <- validate_and_save_input_rds(
+        data_input = loaded_input$data_raw,
+        input_name = source_name,
+        input_slug = source_slug,
+        derived_folder = derived_folder
+      )
+      
+      if (!isTRUE(validated_input$valid)) {
+        return(NULL)
+      }
+      
+      loaded_input$data_raw <- validated_input$data
+      data_raw <- validated_input$data
 
       if (identical(source_name, "ODDPub")) {
         data_raw <- filter_oddpub_open_datasets(data_raw)
+      }
+      
+      if (identical(source_name, "ROAGG")) {
+        data_raw <- filter_roagg_input(data_raw)
       }
 
       column_map <- choose_column_map(
@@ -593,27 +1026,21 @@ source_inputs <- selected_sources |>
         already_cleaned = loaded_input$already_cleaned
       )
 
-      prepared_input <- prepare_input_data(
-        data_raw = data_raw,
-        column_map = column_map,
-        already_cleaned = loaded_input$already_cleaned,
-        dataset_name = paste0(source_slug, "_cleaning_steps"),
-        output_folder = file.path(derived_folder, source_slug),
-        is_dcc = FALSE
-      )
-
       list(
         source_name = source_name,
         source_slug = source_slug,
         storage_state = storage_state,
         input_path = input_path,
         already_cleaned = loaded_input$already_cleaned,
-        data_raw = data_raw,
-        data_raw_renamed = prepared_input$data_raw_renamed,
-        data_clean = prepared_input$data_clean
+        column_map = column_map,
+        data_raw = data_raw
       )
     }
-  )
+  ) |> 
+    purrr::compact()
+
+# Step 6: choose and load DCC in the same way.
+# DCC is validated first and only then mapped/prepared if it is usable.
 
 dcc_storage_state <- choose_storage_state(
   input_name = "DCC",
@@ -632,24 +1059,72 @@ dcc_loaded_input <- load_input_data(
   derived_folder = derived_folder
 )
 
-dcc_column_map <- choose_column_map(
+dcc_validated_input <- validate_and_save_input_rds(
   data_input = dcc_loaded_input$data_raw,
   input_name = "DCC",
-  already_cleaned = dcc_loaded_input$already_cleaned
+  input_slug = "dcc",
+  derived_folder = derived_folder
 )
 
-dcc_prepared_input <- prepare_input_data(
-  data_raw = dcc_loaded_input$data_raw,
-  column_map = dcc_column_map,
-  already_cleaned = dcc_loaded_input$already_cleaned,
-  dataset_name = "dcc_cleaning_steps",
-  output_folder = file.path(derived_folder, "dcc"),
-  is_dcc = TRUE
-)
+# Step 7: prepare all valid source inputs for matching.
+# This happens only after all input files have already been loaded and checked.
 
-data_raw_dcc <- dcc_loaded_input$data_raw
-data_raw_dcc_renamed <- dcc_prepared_input$data_raw_renamed
-dcc_data_clean <- dcc_prepared_input$data_clean
+source_inputs <- source_inputs |>
+  purrr::imap(
+    \(source_input, source_slug) {
+      prepared_input <- prepare_input_data(
+        data_raw = source_input$data_raw,
+        column_map = source_input$column_map,
+        already_cleaned = source_input$already_cleaned,
+        dataset_name = paste0(source_slug, "_cleaning_steps"),
+        output_folder = file.path(derived_folder, source_slug),
+        is_dcc = FALSE
+      )
+
+      c(
+        source_input,
+        list(
+          data_raw_renamed = prepared_input$data_raw_renamed,
+          data_clean = prepared_input$data_clean
+        )
+      )
+    }
+  )
+
+# Step 8: prepare DCC only if it passed validation.
+# If DCC is invalid, create empty placeholder tables so the document can still finish.
+
+if (!isTRUE(dcc_validated_input$valid)) {
+  data_raw_dcc <- tibble::tibble()
+  data_raw_dcc_renamed <- tibble::tibble()
+  dcc_data_clean <- tibble::tibble(
+    dataset = character(),
+    dataset_clean = character(),
+    doi = character()
+  )
+} else {
+  dcc_loaded_input$data_raw <- dcc_validated_input$data
+
+  dcc_column_map <- choose_column_map(
+    data_input = dcc_loaded_input$data_raw,
+    input_name = "DCC",
+    already_cleaned = dcc_loaded_input$already_cleaned
+  )
+
+  data_raw_dcc <- dcc_loaded_input$data_raw
+
+  dcc_prepared_input <- prepare_input_data(
+    data_raw = dcc_loaded_input$data_raw,
+    column_map = dcc_column_map,
+    already_cleaned = dcc_loaded_input$already_cleaned,
+    dataset_name = "dcc_cleaning_steps",
+    output_folder = file.path(derived_folder, "dcc"),
+    is_dcc = TRUE
+  )
+
+  data_raw_dcc_renamed <- dcc_prepared_input$data_raw_renamed
+  dcc_data_clean <- dcc_prepared_input$data_clean
+}
 
 ```
 
@@ -657,11 +1132,23 @@ Successfully loaded the selected source dataset identifier lists and the DCC dat
 
 ```{r match_and_clean, echo=FALSE, warning=FALSE, include=FALSE}
 
+# In this chunk we match each prepared source input to DCC by dataset_clean, then create one combined table across all sources.
+
+# Step 1: rename the key DCC columns so the matched tables are easier to read.
+
 dcc_join_ready <- dcc_data_clean |>
   dplyr::rename(
     dataset_dcc = dataset,
     doi_dcc = doi
   )
+
+# Step 2: match each source to DCC on dataset_clean.
+# The result keeps:
+# - the cleaned identifier used for matching
+# - the original source identifier
+# - the original DCC identifier
+# - source and DCC DOI values
+# - a source column showing where each match came from
 
 source_matches <- source_inputs |>
   purrr::imap(
@@ -695,9 +1182,13 @@ source_matches <- source_inputs |>
     }
   )
 
+# Step 3: append all per-source matched tables into one combined table.
+
 all_sources_dcc_joined <- source_matches |>
   purrr::map("joined") |>
   dplyr::bind_rows()
+
+# Step 4: also store a deduplicated version of the combined matched table.
 
 all_sources_dcc_joined_dedup <- source_matches |>
   purrr::map("joined_dedup") |>
@@ -707,11 +1198,18 @@ all_sources_dcc_joined_dedup <- source_matches |>
 
 ```{r save_objects, echo=FALSE, include=FALSE}
 
+# In this chunk we save all important intermediate and final objects so the full workflow can be inspected later without rerunning the qmd from scratch.
+
+# Step 1: start with the DCC objects and the validation log.
+
 objects_to_save <- list(
   data_raw_dcc = data_raw_dcc,
   data_raw_dcc_renamed = data_raw_dcc_renamed,
-  dcc_data_clean = dcc_data_clean
+  dcc_data_clean = dcc_data_clean,
+  input_validation_log = input_validation_log
 )
+
+# Step 2: add all prepared source objects dynamically.
 
 source_inputs |>
   purrr::iwalk(
@@ -722,6 +1220,8 @@ source_inputs |>
     }
   )
 
+# Step 3: add all per-source match objects dynamically.
+
 source_matches |>
   purrr::iwalk(
     \(source_match, source_slug) {
@@ -730,8 +1230,12 @@ source_matches |>
     }
   )
 
+# Step 4: add the combined match tables.
+
 objects_to_save[["all_sources_dcc_joined"]] <- all_sources_dcc_joined
 objects_to_save[["all_sources_dcc_joined_dedup"]] <- all_sources_dcc_joined_dedup
+
+# Step 5: save every object as an .rds in the derived folder.
 
 purrr::iwalk(
   objects_to_save,
@@ -743,9 +1247,20 @@ purrr::iwalk(
   }
 )
 
+# Step 6: save the validation log as a .csv for easier manual review.
+
+readr::write_csv(
+  input_validation_log,
+  file.path(derived_folder, "input_validation_log.csv")
+)
+
 ```
 
 ```{r count, echo=FALSE, include=FALSE}
+
+# In this chunk we summarize how many articles and datasets were found in each source input and how many DCC articles, mentions, and datasets remain after preparation.
+
+# Step 1: create source-level counts for each selected source input.
 
 source_counts <- source_inputs |>
   purrr::map_dfr(
@@ -766,6 +1281,8 @@ source_counts <- source_inputs |>
       )
     }
   )
+
+# Step 2: create DCC-level counts.
 
 dcc_counts <- tibble::tibble(
   Metric = c(
@@ -789,6 +1306,8 @@ dcc_counts <- tibble::tibble(
   )
 )
 
+# Step 3: combine all summary rows into one table for presentation.
+
 joined_counts <- dplyr::bind_rows(
   source_counts,
   dcc_counts
@@ -797,6 +1316,8 @@ joined_counts <- dplyr::bind_rows(
 ```
 
 ```{r present_table, echo=FALSE}
+
+# Show the final summary table in an interactive datatable for quick inspection.
 
 DT::datatable(
   joined_counts,
@@ -811,6 +1332,22 @@ DT::datatable(
     style = "caption-side: top; text-align: left;",
     "Summary of distinct counts from the selected source inputs and DCC"
   )
+)
+
+```
+
+``` {r create_runtime_csv, echo=FALSE}
+
+# Save the render start time, end time, and total duration as a csv so the run time of the qmd is documented.
+
+render_end <- Sys.time()
+readr::write_csv(
+  tibble::tibble(
+    render_start = render_start,
+    render_end = render_end,
+    duration_seconds = as.numeric(difftime(render_end, render_start, units = "secs"))
+  ),
+  "runtime_documentation.csv"
 )
 
 ```
