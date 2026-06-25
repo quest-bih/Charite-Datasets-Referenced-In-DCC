@@ -1,5 +1,3 @@
-# file: R/plots.R
-
 plot_height_from_n_categories <- function(n, min_height = 5, max_height = 14, per_category = 0.35) {
   min(max(min_height, n * per_category), max_height)
 }
@@ -55,6 +53,8 @@ prep_charite_year_counts <- function(data, year_col = "year") {
     dplyr::mutate(year = as.character(year))
 }
 
+# Plot title: Charité publication years
+# This bar plot shows how many rows fall into each Charité publication year.
 plot_charite_year_counts <- function(data) {
   ggplot2::ggplot(data, ggplot2::aes(x = stats::reorder(year, as.numeric(year)), y = n)) +
     ggplot2::geom_col(fill = "#B39DDB", color = "black") +
@@ -78,6 +78,9 @@ prep_charite_dataset_frequency <- function(data, dataset_col = "dataset_clean") 
     dplyr::arrange(dataset_clean, n)
 }
 
+# Plot title: Frequency of Charité datasets
+# This histogram shows how often cleaned dataset identifiers appear in Charité,
+# using a log-scaled x-axis because dataset frequencies can be highly skewed.
 plot_charite_dataset_frequency <- function(data) {
   ggplot2::ggplot(data, ggplot2::aes(x = n)) +
     ggplot2::geom_histogram(bins = 10, color = "black", fill = NA) +
@@ -109,6 +112,9 @@ prep_dcc_reference_frequency <- function(data, dataset_col = "dataset_clean", do
     dplyr::arrange(dataset_clean, n)
 }
 
+# Plot title: DCC references per dataset
+# This histogram shows how many distinct DCC references each cleaned dataset has,
+# again on a log-scaled x-axis to make long-tailed frequencies easier to inspect.
 plot_dcc_reference_frequency <- function(data) {
   ggplot2::ggplot(data, ggplot2::aes(x = n)) +
     ggplot2::geom_histogram(bins = 10, color = "black", fill = NA) +
@@ -138,6 +144,8 @@ prep_dcc_publication_years <- function(data, doi_col = "doi") {
     dplyr::mutate(year = as.character(year))
 }
 
+# Plot title: DCC publication years
+# This bar plot shows the number of DCC rows per extracted publication year.
 plot_dcc_publication_years <- function(data) {
   ggplot2::ggplot(data, ggplot2::aes(x = stats::reorder(year, as.numeric(year)), y = n)) +
     ggplot2::geom_col(fill = "#FFE0B2", color = "black") +
@@ -170,6 +178,9 @@ prep_repository_counts <- function(data, repository_col = "repository", dataset_
   )
 }
 
+# Plot title: Repository counts
+# This horizontal bar plot compares repositories by count.
+# The y-axis is log-scaled so both common and rare repositories can be seen clearly.
 plot_repository_counts <- function(data, x_label = "Repository", y_label = "Count (log scale)") {
   ggplot2::ggplot(data, ggplot2::aes(x = stats::reorder(repository, n), y = n)) +
     ggplot2::geom_col(fill = "#80CBC4") +
@@ -213,6 +224,9 @@ prep_matched_reference_frequency <- function(data, dataset_col = "dataset_clean"
     dplyr::arrange(dataset_clean, n)
 }
 
+# Plot title: Matched DCC references per dataset
+# This histogram shows how many matched DCC references each matched dataset has,
+# using a log-scaled x-axis to handle large differences in frequency.
 plot_matched_reference_frequency <- function(data) {
   ggplot2::ggplot(data, ggplot2::aes(x = n)) +
     ggplot2::geom_histogram(bins = 10, color = "black", fill = NA) +
@@ -242,6 +256,9 @@ prep_matched_reference_years <- function(data, dataset_col = "dataset_clean", ye
     )
 }
 
+# Plot title: Publication years of matched DCC references
+# This stacked bar plot shows how matched DCC references are distributed over
+# publication years, split by the top datasets and grouped into an "Others" category.
 plot_matched_reference_years_top <- function(data, top_n = 7) {
   top_ids <- data |>
     dplyr::group_by(dataset_clean) |>
@@ -287,4 +304,3 @@ plot_matched_reference_years_top <- function(data, top_n = 7) {
       legend.text = ggplot2::element_text(size = 11)
     )
 }
-

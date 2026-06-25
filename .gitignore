@@ -21,7 +21,7 @@ _freeze/
 
 # Project-specific outputs
 notebooks/plots/
-data/raw/dcc/
+data/raw/
 data/derived/
 data/wrangling_steps/dcc/
 data/processed/dcc/
