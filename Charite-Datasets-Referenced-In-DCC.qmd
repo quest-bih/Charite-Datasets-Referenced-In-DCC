@@ -1241,12 +1241,6 @@ dcc_join_ready <- dcc_data_clean |>
   )
 
 # Step 2: match each source to DCC on dataset_clean.
-# The result keeps:
-# - the cleaned identifier used for matching
-# - the original source identifier
-# - the original DCC identifier
-# - source and DCC DOI values
-# - a source column showing where each match came from
 
 source_matches <- source_inputs |>
   purrr::imap(
@@ -1292,6 +1286,52 @@ all_sources_dcc_joined_dedup <- source_matches |>
   purrr::map("joined_dedup") |>
   dplyr::bind_rows()
 
+# Step 5: Repeat steps 3 and 4, but choose only the relevant columns, to get a smaller table.
+
+all_sources_dcc_joined_condensed <- all_sources_dcc_joined |>
+  select(
+    source,
+    dataset_clean,
+    dataset_source,
+    dataset_dcc,
+    doi_source,
+    doi_dcc,
+    year,
+    data_availability_statement,
+    data_access,
+    dataset_license,
+    license_name,
+    repository_source,
+    repository_dcc,
+    publicationYear,
+    repository,
+    publishedDate,
+    journal
+  )
+
+
+all_sources_dcc_joined_dedup_condensed <- all_sources_dcc_joined_dedup |>
+  select(
+    source,
+    dataset_clean,
+    dataset_source,
+    dataset_dcc,
+    doi_source,
+    doi_dcc,
+    year,
+    data_availability_statement,
+    data_access,
+    dataset_license,
+    license_name,
+    repository_source,
+    repository_dcc,
+    publicationYear,
+    repository,
+    publishedDate,
+    journal
+  )
+
+
 ```
 
 ```{r save_objects, echo=FALSE, include=FALSE}
@@ -1332,6 +1372,8 @@ source_matches |>
 
 objects_to_save[["all_sources_dcc_joined"]] <- all_sources_dcc_joined
 objects_to_save[["all_sources_dcc_joined_dedup"]] <- all_sources_dcc_joined_dedup
+objects_to_save[["all_sources_dcc_joined_condensed"]] <- all_sources_dcc_joined_condensed
+objects_to_save[["all_sources_dcc_joined_dedup_condensed"]] <- all_sources_dcc_joined_dedup_condensed
 
 # Step 5: save every object as an .rds in the derived folder.
 
