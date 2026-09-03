@@ -21,8 +21,9 @@ _freeze/
 
 # Project-specific outputs
 notebooks/plots/
-data/raw/
+data/raw_input/
 data/derived/
+data/output/derived/dcc/
 data/wrangling_steps/dcc/
 data/processed/dcc/
 /.quarto/

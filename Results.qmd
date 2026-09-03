@@ -1,0 +1,927 @@
+---
+title: "Results"
+author: "Avihay Cohen"
+format: html
+editor: source
+---
+
+```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Load libraties
+
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+library(pacman)
+pacman::p_load(tidyverse, DT, patchwork, RColorBrewer, here, tcltk, networkD3, htmlwidgets, ggvenn, ggbeeswarm, ggforce, glue, broom, scales, tibble, grid, purrr)
+
+```
+
+```{r prep, echo=FALSE, warning=FALSE, include=FALSE, message=FALSE}
+#| message: false
+#| warning: false
+
+# choose_output_and_load_results.R
+
+choose_output_and_load_results <- function() {
+  output_dir <- tcltk::tk_choose.dir(caption = "Select the output folder")
+
+  if (is.na(output_dir) || !nzchar(output_dir)) {
+    stop("No folder was selected.", call. = FALSE)
+  }
+
+  output_dir <- normalizePath(output_dir, winslash = "/", mustWork = TRUE)
+  derived_dir <- file.path(output_dir, "derived")
+
+  paths <- c(
+    all_sources_dcc_joined_dedup_condensed_dist =
+      file.path(
+        output_dir,
+        "openalex_script_output",
+        "all_sources_dcc_joined_condensed_dist_w_au_year_au_ov_no_shared_doi.rds"
+      ),
+    all_sources_dcc_joined_condensed =
+      file.path(
+        derived_dir,
+        "all_sources_dcc_joined",
+        "all_sources_dcc_joined_condensed.rds"
+      ),
+    datastet_cleaning_steps_13_rm_trailing_slash =
+      file.path(
+        derived_dir,
+        "datastet",
+        "cleaning_steps",
+        "datastet_cleaning_steps_13_rm_trailing_slash.rds"
+      ),
+    oddpub_cleaning_steps_13_rm_trailing_slash =
+      file.path(
+        derived_dir,
+        "oddpub",
+        "cleaning_steps",
+        "oddpub_cleaning_steps_13_rm_trailing_slash.rds"
+      ),
+    roagg_cleaning_steps_13_rm_trailing_slash =
+      file.path(
+        derived_dir,
+        "roagg",
+        "cleaning_steps",
+        "roagg_cleaning_steps_13_rm_trailing_slash.rds"
+      )
+  )
+
+  missing_paths <- paths[!file.exists(paths)]
+
+  if (length(missing_paths) > 0L) {
+    stop(
+      paste0(
+        "The following required file(s) were not found:\n",
+        paste(names(missing_paths), missing_paths, sep = ": ", collapse = "\n")
+      ),
+      call. = FALSE
+    )
+  }
+
+  all_sources_dcc_joined_dedup_condensed_dist <-
+    readRDS(paths[["all_sources_dcc_joined_dedup_condensed_dist"]])
+
+  all_sources_dcc_joined_condensed <-
+    readRDS(paths[["all_sources_dcc_joined_condensed"]])
+
+  datastet_cleaning_steps_13_rm_trailing_slash <-
+    readRDS(paths[["datastet_cleaning_steps_13_rm_trailing_slash"]])
+
+  oddpub_cleaning_steps_13_rm_trailing_slash <-
+    readRDS(paths[["oddpub_cleaning_steps_13_rm_trailing_slash"]])
+
+  roagg_cleaning_steps_13_rm_trailing_slash <-
+    readRDS(paths[["roagg_cleaning_steps_13_rm_trailing_slash"]])
+
+  objects_to_load <- list(
+    output_dir = output_dir,
+    derived_dir = derived_dir,
+    all_sources_dcc_joined_dedup_condensed_dist =
+      all_sources_dcc_joined_dedup_condensed_dist,
+    all_sources_dcc_joined_condensed =
+      all_sources_dcc_joined_condensed,
+    datastet_cleaning_steps_13_rm_trailing_slash =
+      datastet_cleaning_steps_13_rm_trailing_slash,
+    oddpub_cleaning_steps_13_rm_trailing_slash =
+      oddpub_cleaning_steps_13_rm_trailing_slash,
+    roagg_cleaning_steps_13_rm_trailing_slash =
+      roagg_cleaning_steps_13_rm_trailing_slash
+  )
+
+  list2env(objects_to_load, envir = .GlobalEnv)
+
+  message("Loaded 5 input tables.")
+
+  invisible(objects_to_load)
+}
+
+choose_output_and_load_results()
+
+```
+
+<br>
+
+```{r matched_ds, echo=FALSE, warning=FALSE, message=FALSE}
+
+flow_data <- all_sources_dcc_joined_dedup_condensed_dist
+
+source_levels <- c("ODDPub", "ROAGG", "DataStet")
+
+# Edit this tibble to control rectangle position, size, fill, outline, and text color
+node_style <- tibble::tribble(
+  ~source,       ~x, ~y, ~width, ~height, ~fill,      ~outline, ~outline_width, ~text_colour,
+  "ODDPub",       1,  3,    2.4,    1.15, "#DDEBF7",  "black",             0.8, "black",
+  "ROAGG",        4,  3,    2.4,    1.15, "#E2F0D9",  "black",             0.8, "black",
+  "DataStet",     7,  3,    2.4,    1.15, "#FCE4D6",  "black",             0.8, "black",
+  "all_sources",  4,  1,    3.6,    1.35, "#FFF2CC",  "black",             0.8, "black"
+)
+
+# Edit these to control all arrows
+arrow_colour <- "black"
+arrow_linewidth <- 0.8
+arrow_linetype <- 1
+arrow_angle <- 20
+arrow_length <- grid::unit(0.25, "cm")
+
+count_flow_metric <- function(data, distinct_cols, source_levels = c("ODDPub", "ROAGG", "DataStet")) {
+  source_counts <- tibble::tibble(source = source_levels) |>
+    dplyr::left_join(
+      data |>
+        dplyr::filter(source %in% source_levels) |>
+        dplyr::distinct(source, dplyr::across(tidyselect::all_of(distinct_cols))) |>
+        dplyr::count(source, name = "n"),
+      by = "source"
+    ) |>
+    dplyr::mutate(
+      n = dplyr::coalesce(n, 0L)
+    )
+  
+  all_sources_sum <- sum(source_counts$n)
+  
+  all_sources_dedup <- data |>
+    dplyr::filter(source %in% source_levels) |>
+    dplyr::distinct(dplyr::across(tidyselect::all_of(distinct_cols))) |>
+    nrow()
+  
+  tibble::tibble(
+    source = c(source_levels, "all_sources"),
+    n = c(source_counts$n, all_sources_sum),
+    n_dedup = c(rep(NA_integer_, length(source_levels)), all_sources_dedup)
+  )
+}
+
+make_flow_plot <- function(data, distinct_cols, metric_label, node_style, source_levels = c("ODDPub", "ROAGG", "DataStet")) {
+  counts_tbl <- count_flow_metric(
+    data = data,
+    distinct_cols = distinct_cols,
+    source_levels = source_levels
+  )
+  
+  nodes <- node_style |>
+    dplyr::left_join(counts_tbl, by = "source") |>
+    dplyr::mutate(
+      label = dplyr::case_when(
+        source == "all_sources" ~ paste0(
+          "All sources",
+          "\n",
+          metric_label,
+          " Sum: ",
+          n,
+          "\n",
+          metric_label,
+          " Distinct Sum: ",
+          n_dedup
+        ),
+        .default = paste0(
+          source,
+          "\n",
+          metric_label,
+          "",
+          n
+        )
+      ),
+      xmin = x - width / 2,
+      xmax = x + width / 2,
+      ymin = y - height / 2,
+      ymax = y + height / 2
+    )
+  
+  center_node <- nodes |>
+    dplyr::filter(source == "all_sources") |>
+    dplyr::slice(1)
+  
+  edges <- nodes |>
+    dplyr::filter(source %in% source_levels) |>
+    dplyr::transmute(
+      source,
+      x = x,
+      y = ymin,
+      xend = center_node$x[[1]],
+      yend = center_node$ymax[[1]]
+    )
+  
+  ggplot2::ggplot() +
+    ggplot2::geom_rect(
+      data = nodes,
+      ggplot2::aes(
+        xmin = xmin,
+        xmax = xmax,
+        ymin = ymin,
+        ymax = ymax,
+        fill = fill,
+        colour = outline,
+        linewidth = outline_width
+      ),
+      show.legend = FALSE
+    ) +
+    ggplot2::scale_fill_identity() +
+    ggplot2::scale_linewidth_identity() +
+    ggplot2::geom_text(
+      data = nodes,
+      ggplot2::aes(
+        x = x,
+        y = y,
+        label = label,
+        colour = text_colour
+      ),
+      lineheight = 1.1,
+      size = 4.2,
+      show.legend = FALSE
+    ) +
+    ggplot2::scale_colour_identity() +
+    ggplot2::geom_segment(
+      data = edges,
+      ggplot2::aes(
+        x = x,
+        y = y,
+        xend = xend,
+        yend = yend
+      ),
+      colour = arrow_colour,
+      linewidth = arrow_linewidth,
+      linetype = arrow_linetype,
+      arrow = grid::arrow(
+        angle = arrow_angle,
+        length = arrow_length,
+        type = "closed"
+      )
+    ) +
+    ggplot2::coord_equal(
+      xlim = c(min(nodes$xmin) - 0.4, max(nodes$xmax) + 0.4),
+      ylim = c(min(nodes$ymin) - 0.4, max(nodes$ymax) + 0.4),
+      clip = "off"
+    ) +
+    ggplot2::theme_void()
+}
+
+flow_data_unique_datasets_sources <- dplyr::bind_rows(
+  oddpub_cleaning_steps_13_rm_trailing_slash |>
+    dplyr::distinct(dataset_clean) |>
+    dplyr::transmute(
+      source = "ODDPub",
+      dataset_clean
+    ),
+  roagg_cleaning_steps_13_rm_trailing_slash |>
+    dplyr::distinct(dataset_clean) |>
+    dplyr::transmute(
+      source = "ROAGG",
+      dataset_clean
+    ),
+  datastet_cleaning_steps_13_rm_trailing_slash |>
+    dplyr::distinct(dataset_clean) |>
+    dplyr::transmute(
+      source = "DataStet",
+      dataset_clean
+    )
+)
+
+plot_unique_datasets_sources <- make_flow_plot(
+  data = flow_data_unique_datasets_sources,
+  distinct_cols = "dataset_clean",
+  metric_label = "",
+  node_style = node_style,
+  source_levels = source_levels
+)
+
+plot_unique_datasets <- make_flow_plot(
+  data = flow_data,
+  distinct_cols = "dataset_clean",
+  metric_label = "",
+  node_style = node_style,
+  source_levels = source_levels
+)
+
+# If your table still uses doi_source instead of doi_charite, change "doi_charite" below to "doi_source"
+plot_unique_doi_charite <- make_flow_plot(
+  data = flow_data,
+  distinct_cols = "doi_charite",
+  metric_label = "",
+  node_style = node_style,
+  source_levels = source_levels
+)
+
+plot_unique_mentions <- make_flow_plot(
+  data = flow_data,
+  distinct_cols = c("doi_dcc", "dataset_clean"),
+  metric_label = "",
+  node_style = node_style,
+  source_levels = source_levels
+)
+
+```
+
+<br>
+
+# Number of Datasets by Source
+
+**Note:** for ROAGG and Datastet, some datasets are _not_ Open-data/Restricted
+
+```{r plot_sources_ds, echo=FALSE, warning=FALSE, message=FALSE}
+
+plot_unique_datasets_sources
+
+```
+
+# Number of Matched Datasets by Source
+
+```{r plot_matched_ds, echo=FALSE, warning=FALSE, message=FALSE}
+
+plot_unique_datasets
+
+```
+
+# Number of Articles Associated with Matched Datasets by Source
+
+```{r plot_matched_dois, echo=FALSE, warning=FALSE, message=FALSE}
+
+plot_unique_doi_charite
+
+```
+
+# Number of Mentions by Source
+
+```{r plot_matched_mentions, echo=FALSE, warning=FALSE, message=FALSE}
+
+plot_unique_mentions
+
+
+```
+
+<br>
+
+# Distribution Frequency of Datasets References
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#| label: fig-datasets-freq-dist
+#| out.width: 100%
+
+ds_freq <- all_sources_dcc_joined_dedup_condensed_dist |> 
+  select(dataset_clean, doi_dcc) |> 
+  distinct() |> 
+  group_by(dataset_clean) |> 
+  summarise(n=n()) |>
+  arrange(dataset_clean, n)
+
+ds_freq_plot_data <- ds_freq |>
+  dplyr::filter(!is.na(n), n > 0)
+
+bins_n <- ds_freq_plot_data |>
+  dplyr::summarise(
+    bins = grDevices::nclass.FD(log10(n)),
+    bins = dplyr::coalesce(as.integer(round(bins)), 1L),
+    bins = pmax(5L, pmin(bins, 20L))
+  ) |>
+  dplyr::pull(bins)
+
+x_breaks <- scales::breaks_log(n = 6)(range(ds_freq_plot_data$n))
+
+hist_counts <- ggplot2::ggplot_build(
+  ggplot2::ggplot(ds_freq_plot_data, ggplot2::aes(x = n)) +
+    ggplot2::geom_histogram(bins = bins_n)
+)$data[[1]]$count
+
+fig_width <- pmin(12, pmax(7, 5.5 + 0.18 * bins_n))
+fig_height <- pmin(10, pmax(5, 4.5 + 0.12 * max(hist_counts)))
+
+knitr::opts_current$set(
+  fig.width = fig_width,
+  fig.height = fig_height
+)
+
+ds_freq_plot_data |>
+  ggplot2::ggplot(ggplot2::aes(x = n)) +
+  ggplot2::geom_histogram(
+    bins = bins_n,
+    colour = "black",
+    fill = NA
+  ) +
+  ggplot2::stat_bin(
+    bins = bins_n,
+    geom = "text",
+    ggplot2::aes(label = after_stat(count)),
+    vjust = -0.3,
+    size = 4
+  ) +
+  ggplot2::scale_x_log10(
+    breaks = x_breaks,
+    labels = scales::label_number(accuracy = 1)
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = scales::breaks_pretty(n = 6),
+    expand = ggplot2::expansion(mult = c(0, 0.08))
+  ) +
+  ggplot2::labs(
+    x = "Number of References (log scale)",
+    y = "Number of Datasets"
+  ) +
+  ggplot2::theme_classic() +
+  ggplot2::theme(
+    legend.position = "none",
+    axis.title.y = ggplot2::element_text(
+      size = 24,
+      color = "black",
+      margin = ggplot2::margin(r = 20)
+    ),
+    axis.title.x = ggplot2::element_text(
+      size = 24,
+      color = "black",
+      margin = ggplot2::margin(t = 20)
+    ),
+    axis.text.y = ggplot2::element_text(size = 22, color = "black"),
+    axis.text.x = ggplot2::element_text(size = 22, color = "black")
+  )
+
+```
+
+# Distribution of Mentions Across Repositories
+
+```{r repo-dist-ds, echo=FALSE, warning=FALSE, message=FALSE}
+#| label: repo-dist-ds
+#| out.width: 80%
+
+shorten_repository_label <- function(x, max_chars = 30) {
+  tibble::tibble(repository_dcc = x) |>
+    dplyr::mutate(
+      inside_parens = stringr::str_match(repository_dcc, "\\(([^()]*)\\)")[, 2],
+      has_parens = !is.na(inside_parens),
+      parens_has_space = has_parens & stringr::str_detect(inside_parens, "\\s"),
+      parens_no_space = has_parens & !parens_has_space & inside_parens != "",
+      outside_parens = repository_dcc |>
+        stringr::str_remove("\\s*\\([^()]*\\)") |>
+        stringr::str_squish(),
+      first_token = stringr::str_extract(repository_dcc, "\\S+"),
+      repository_label = dplyr::case_when(
+        nchar(repository_dcc) <= max_chars ~ repository_dcc,
+        parens_no_space ~ inside_parens,
+        parens_has_space & outside_parens != "" ~ outside_parens,
+        .default = first_token
+      )
+    ) |>
+    dplyr::pull(repository_label)
+}
+
+rep_dt <- all_sources_dcc_joined_dedup_condensed_dist |>
+  select(repository_dcc, doi_dcc, dataset_clean) |>
+  group_by(repository_dcc) |>
+  summarise(n = n_distinct(doi_dcc, dataset_clean), .groups = "drop") |>
+  arrange(desc(n))
+
+rep_dt_plot_data <- rep_dt |>
+  dplyr::filter(!is.na(n), n > 0) |>
+  dplyr::mutate(
+    repository_label = shorten_repository_label(repository_dcc, max_chars = 30)
+  )
+
+label_map <- stats::setNames(
+  rep_dt_plot_data$repository_label,
+  rep_dt_plot_data$repository_dcc
+)
+
+n_repos <- nrow(rep_dt_plot_data)
+
+max_repo_chars <- rep_dt_plot_data |>
+  summarise(
+    max_repo_chars = max(c(nchar(as.character(repository_label)), 0), na.rm = TRUE)
+  ) |>
+  pull(max_repo_chars)
+
+max_value_digits <- rep_dt_plot_data |>
+  summarise(
+    max_value_digits = max(c(nchar(as.character(n)), 1), na.rm = TRUE)
+  ) |>
+  pull(max_value_digits)
+
+y_breaks <- scales::breaks_log(n = 7)(range(c(rep_dt_plot_data$n, 1), na.rm = TRUE))
+
+top_expand <- pmin(
+  0.35,
+  pmax(0.15, 0.10 + 0.02 * max_value_digits)
+)
+
+fig_height <- pmin(
+  18,
+  pmax(5, 2.8 + 0.32 * n_repos)
+)
+
+fig_width <- pmin(
+  16,
+  pmax(8, 6.5 + 0.05 * max_repo_chars + 0.35 * max_value_digits)
+)
+
+knitr::opts_current$set(
+  fig.width = fig_width,
+  fig.height = fig_height
+)
+
+rep_dt_plot_data |>
+  ggplot(aes(x = reorder(repository_dcc, n), y = n)) +
+  geom_bar(
+    stat = "identity",
+    position = "dodge",
+    fill = "#80CBC4"
+  ) +
+  geom_text(
+    aes(y = n, label = n),
+    hjust = -0.2,
+    size = 5,
+    color = "black"
+  ) +
+  scale_x_discrete(labels = label_map) +
+  scale_y_log10(
+    breaks = y_breaks,
+    labels = scales::label_comma(),
+    expand = expansion(mult = c(0.02, top_expand))
+  ) +
+  coord_flip() +
+  labs(
+    x = "Repository",
+    y = "Number of Mentions (Log Scale)"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_text(size = 14, color = "black", margin = margin(r = 20)),
+    axis.title.x = element_text(size = 14, color = "black", margin = margin(t = 20)),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+```
+
+# Distribution of Datasets Across Repositories
+
+```{r repo-dist-ref, echo=FALSE, warning=FALSE, message=FALSE}
+#| label: repo-dist-ref
+#| out.width: 80%
+
+shorten_repository_label <- function(x, max_chars = 30) {
+  tibble::tibble(repository_dcc = x) |>
+    dplyr::mutate(
+      inside_parens = stringr::str_match(repository_dcc, "\\(([^()]*)\\)")[, 2],
+      has_parens = !is.na(inside_parens),
+      parens_has_space = has_parens & stringr::str_detect(inside_parens, "\\s"),
+      parens_no_space = has_parens & !parens_has_space & inside_parens != "",
+      outside_parens = repository_dcc |>
+        stringr::str_remove("\\s*\\([^()]*\\)") |>
+        stringr::str_squish(),
+      first_token = stringr::str_extract(repository_dcc, "\\S+"),
+      repository_label = dplyr::case_when(
+        nchar(repository_dcc) <= max_chars ~ repository_dcc,
+        parens_no_space ~ inside_parens,
+        parens_has_space & outside_parens != "" ~ outside_parens,
+        .default = first_token
+      )
+    ) |>
+    dplyr::pull(repository_label)
+}
+
+rep_ds <- all_sources_dcc_joined_dedup_condensed_dist |>
+  select(repository_dcc, dataset_clean) |>
+  group_by(repository_dcc) |>
+  summarise(n = n_distinct(dataset_clean), .groups = "drop") |>
+  arrange(desc(n))
+
+rep_ds_plot_data <- rep_ds |>
+  dplyr::filter(!is.na(n), n > 0) |>
+  dplyr::mutate(
+    repository_label = shorten_repository_label(repository_dcc, max_chars = 30)
+  )
+
+label_map <- stats::setNames(
+  rep_ds_plot_data$repository_label,
+  rep_ds_plot_data$repository_dcc
+)
+
+n_repos <- nrow(rep_ds_plot_data)
+
+max_repo_chars <- rep_ds_plot_data |>
+  summarise(
+    max_repo_chars = max(c(nchar(as.character(repository_label)), 0), na.rm = TRUE)
+  ) |>
+  pull(max_repo_chars)
+
+max_value_digits <- rep_ds_plot_data |>
+  summarise(
+    max_value_digits = max(c(nchar(as.character(n)), 1), na.rm = TRUE)
+  ) |>
+  pull(max_value_digits)
+
+y_breaks <- scales::breaks_log(n = 7)(range(c(rep_ds_plot_data$n, 1), na.rm = TRUE))
+
+top_expand <- pmin(
+  0.35,
+  pmax(0.15, 0.10 + 0.02 * max_value_digits)
+)
+
+fig_height <- pmin(
+  18,
+  pmax(5, 2.8 + 0.32 * n_repos)
+)
+
+fig_width <- pmin(
+  16,
+  pmax(8, 6.5 + 0.05 * max_repo_chars + 0.35 * max_value_digits)
+)
+
+knitr::opts_current$set(
+  fig.width = fig_width,
+  fig.height = fig_height
+)
+
+rep_ds_plot_data |>
+  ggplot(aes(x = reorder(repository_dcc, n), y = n)) +
+  geom_bar(
+    stat = "identity",
+    position = "dodge",
+    fill = "#80CBC4"
+  ) +
+  geom_text(
+    aes(y = n, label = n),
+    hjust = -0.2,
+    size = 5,
+    color = "black"
+  ) +
+  scale_x_discrete(labels = label_map) +
+  scale_y_log10(
+    breaks = y_breaks,
+    labels = scales::label_comma(),
+    expand = expansion(mult = c(0.02, top_expand))
+  ) +
+  coord_flip() +
+  labs(
+    x = "Repository",
+    y = "Number of Distinct Datasets (Log Scale)"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_text(size = 14, color = "black", margin = margin(r = 20)),
+    axis.title.x = element_text(size = 14, color = "black", margin = margin(t = 20)),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black"),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+
+```
+
+# Datasets References by Year: TOP 10 mentioned identifiers
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#| label: fig-top10-datasets-by-year
+#| out.width: 100%
+
+top_n_datasets <- 10L
+
+top_datasets_overall <- all_sources_dcc_joined_dedup_condensed_dist |>
+  dplyr::filter(!is.na(dataset_clean), dataset_clean != "", !is.na(doi_dcc), doi_dcc != "") |>
+  dplyr::group_by(dataset_clean) |>
+  dplyr::summarise(
+    n_overall = dplyr::n_distinct(doi_dcc),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(n_overall), dataset_clean) |>
+  dplyr::slice_head(n = top_n_datasets)
+
+desired_order <- top_datasets_overall$dataset_clean
+
+year_dcc_dt_all_for_plot_top10 <- all_sources_dcc_joined_dedup_condensed_dist |>
+  dplyr::filter(
+    dataset_clean %in% desired_order,
+    !is.na(publishedDate),
+    !is.na(doi_dcc),
+    doi_dcc != ""
+  ) |>
+  dplyr::mutate(
+    year = readr::parse_number(stringr::str_sub(as.character(publishedDate), 1, 4))
+  ) |>
+  dplyr::filter(!is.na(year)) |>
+  dplyr::group_by(year, dataset_clean) |>
+  dplyr::summarise(
+    count = dplyr::n_distinct(doi_dcc),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    dataset_clean = factor(dataset_clean, levels = desired_order),
+    year = dplyr::case_when(
+      year <= 2012 ~ "<=2012",
+      .default = as.character(year)
+    )
+  )
+
+year_levels <- year_dcc_dt_all_for_plot_top10 |>
+  dplyr::distinct(year) |>
+  dplyr::mutate(
+    year_num = readr::parse_number(year),
+    year_sort = dplyr::case_when(
+      year == "<=2012" ~ -Inf,
+      .default = year_num
+    )
+  ) |>
+  dplyr::arrange(year_sort, year) |>
+  dplyr::pull(year)
+
+year_dcc_dt_all_for_plot_top10 <- year_dcc_dt_all_for_plot_top10 |>
+  dplyr::mutate(
+    year = factor(year, levels = year_levels)
+  )
+
+label_data_top10 <- year_dcc_dt_all_for_plot_top10 |>
+  dplyr::mutate(
+    label = as.character(count)
+  )
+
+n_years <- length(year_levels)
+
+max_total_per_year <- year_dcc_dt_all_for_plot_top10 |>
+  dplyr::group_by(year) |>
+  dplyr::summarise(total = sum(count), .groups = "drop") |>
+  dplyr::summarise(max_total = max(total, na.rm = TRUE)) |>
+  dplyr::pull(max_total)
+
+max_total_digits <- nchar(as.character(max_total_per_year))
+
+fig_width <- pmin(
+  18,
+  pmax(8, 5.8 + 0.45 * n_years + 0.25 * max_total_digits)
+)
+
+fig_height <- pmin(
+  12,
+  pmax(6.5, 5.2 + 0.18 * top_n_datasets)
+)
+
+knitr::opts_current$set(
+  fig.width = fig_width,
+  fig.height = fig_height
+)
+
+year_dcc_dt_all_for_plot_top10 |>
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = year,
+      y = count,
+      fill = factor(dataset_clean, levels = rev(desired_order))
+    )
+  ) +
+  ggplot2::geom_col(position = "stack") +
+  ggplot2::geom_text(
+    data = label_data_top10,
+    ggplot2::aes(
+      x = year,
+      y = count,
+      label = label,
+      fill = factor(dataset_clean, levels = rev(desired_order))
+    ),
+    position = ggplot2::position_stack(vjust = 0.5),
+    size = 3.2,
+    show.legend = FALSE
+  ) +
+  ggplot2::labs(
+    x = "Publication Year of Referencing Article",
+    y = "Number of References",
+    fill = "Dataset"
+  ) +
+  ggplot2::scale_x_discrete(
+    labels = \(x) dplyr::case_when(
+      x == "<=2012" ~ "\u2264 2012",
+      .default = x
+    )
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = scales::breaks_pretty(n = 6),
+    expand = ggplot2::expansion(mult = c(0, 0.03))
+  ) +
+  ggplot2::scale_fill_manual(
+    values = stats::setNames(
+      grDevices::hcl.colors(length(desired_order), palette = "Set 3"),
+      rev(desired_order)
+    ),
+    breaks = rev(desired_order)
+  ) +
+  ggplot2::theme_classic() +
+  ggplot2::theme(
+    axis.title.y = ggplot2::element_text(size = 20, color = "black", margin = ggplot2::margin(r = 20)),
+    axis.title.x = ggplot2::element_text(size = 20, color = "black", margin = ggplot2::margin(t = 20)),
+    axis.text.y = ggplot2::element_text(size = 14, color = "black"),
+    axis.text.x = ggplot2::element_text(size = 14, color = "black", angle = 45, hjust = 1),
+    legend.title = ggplot2::element_text(size = 20, margin = ggplot2::margin(b = 15)),
+    legend.text = ggplot2::element_text(size = 16),
+    legend.key.height = grid::unit(25, "pt"),
+    legend.box.margin = ggplot2::margin(l = 16)
+  )
+
+
+
+```
+
+# Sources of Identifiers
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#| label: fig-venn-ids
+#| out.width: 100%
+
+id_source_for_venn <- all_sources_dcc_joined_condensed |>
+  distinct() |> 
+  dplyr::select(dataset_clean, source) |>
+  dplyr::filter(
+    !is.na(dataset_clean),
+    dataset_clean != "",
+    !is.na(source),
+    source != ""
+  ) |>
+  dplyr::distinct()
+
+venn_input_for_debugging <- id_source_for_venn |>
+  tidyr::pivot_wider(
+    names_from = source,
+    values_from = source,
+    values_fn = length,
+    values_fill = 0
+  ) |>
+  dplyr::mutate(
+    dplyr::across(-dataset_clean, ~ .x > 0)
+  )
+
+setlist <- id_source_for_venn |>
+  dplyr::distinct(dataset_clean, source) |>
+  dplyr::group_by(source) |>
+  dplyr::summarise(
+    items = list(dataset_clean),
+    .groups = "drop"
+  ) |>
+  tibble::deframe()
+
+n_sources <- length(setlist)
+
+stopifnot(n_sources %in% c(2L, 3L))
+
+max_source_chars <- max(nchar(names(setlist)))
+max_set_size <- max(lengths(setlist))
+
+set_name_size <- dplyr::case_when(
+  max_source_chars <= 12 ~ 7,
+  max_source_chars <= 25 ~ 6,
+  .default = 5
+)
+
+text_size <- dplyr::case_when(
+  max_set_size <= 30 ~ 6,
+  max_set_size <= 150 ~ 5,
+  .default = 4.2
+)
+
+fig_width <- dplyr::case_when(
+  n_sources == 2 ~ pmin(10, pmax(7, 6.6 + 0.05 * max_source_chars)),
+  .default = pmin(12, pmax(8.5, 8.2 + 0.05 * max_source_chars))
+)
+
+fig_height <- dplyr::case_when(
+  n_sources == 2 ~ pmin(8.5, pmax(6.5, 5.8 + 0.01 * max_set_size)),
+  .default = pmin(10.5, pmax(7.5, 7.0 + 0.01 * max_set_size))
+)
+
+fill_colors <- c("#A6CEE3", "#B2DF8A", "#FDBF6F")[seq_len(n_sources)]
+
+knitr::opts_current$set(
+  fig.width = fig_width,
+  fig.height = fig_height
+)
+
+ggvenn::ggvenn(
+  setlist,
+  set_name_size = set_name_size,
+  text_size = text_size,
+  fill_color = fill_colors,
+  stroke_size = 0.7,
+  stroke_color = "black"
+)
+
+
+```

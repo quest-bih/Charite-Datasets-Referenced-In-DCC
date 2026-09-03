@@ -5,8 +5,6 @@ date: "2026-06-24"
 output: html_document
 ---
 
-Yes — here is the same content styled for a `README.md` file. It reflects the current qmd workflow. 
-
 # Dataset Identifiers Mentioned in DCC
 
 ## Overview

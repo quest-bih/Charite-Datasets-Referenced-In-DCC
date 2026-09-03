@@ -1084,7 +1084,11 @@ source_inputs <- source_inputs |>
             column_map = source_input$column_map,
             already_cleaned = source_input$already_cleaned,
             dataset_name = paste0(source_slug, "_cleaning_steps"),
-            output_folder = file.path(derived_folder, source_slug),
+            output_folder = file.path(
+              derived_folder,
+              source_slug,
+              "cleaning_steps"
+            ),
             is_dcc = FALSE
           )
 
@@ -1175,7 +1179,11 @@ dcc_result <- tryCatch(
       column_map = dcc_column_map,
       already_cleaned = dcc_loaded_input$already_cleaned,
       dataset_name = "dcc_cleaning_steps",
-      output_folder = file.path(derived_folder, "dcc"),
+      output_folder = file.path(
+        derived_folder,
+        "dcc",
+        "cleaning_steps"
+      ),
       is_dcc = TRUE
     )
 
@@ -1248,7 +1256,7 @@ source_matches <- source_inputs |>
       joined <- source_input$data_clean |>
         dplyr::rename(
           dataset_source = dataset,
-          doi_source = doi
+          doi_charite = doi
         ) |>
         dplyr::mutate(source = source_input$source_name) |>
         dplyr::inner_join(
@@ -1261,7 +1269,7 @@ source_matches <- source_inputs |>
           dataset_clean,
           dataset_source,
           dataset_dcc,
-          doi_source,
+          doi_charite,
           doi_dcc,
           dplyr::everything()
         )
@@ -1294,7 +1302,7 @@ all_sources_dcc_joined_condensed <- all_sources_dcc_joined |>
     dataset_clean,
     dataset_source,
     dataset_dcc,
-    doi_source,
+    doi_charite,
     doi_dcc,
     year,
     data_availability_statement,
@@ -1316,7 +1324,7 @@ all_sources_dcc_joined_dedup_condensed <- all_sources_dcc_joined_dedup |>
     dataset_clean,
     dataset_source,
     dataset_dcc,
-    doi_source,
+    doi_charite,
     doi_dcc,
     year,
     data_availability_statement,
@@ -1375,14 +1383,65 @@ objects_to_save[["all_sources_dcc_joined_dedup"]] <- all_sources_dcc_joined_dedu
 objects_to_save[["all_sources_dcc_joined_condensed"]] <- all_sources_dcc_joined_condensed
 objects_to_save[["all_sources_dcc_joined_dedup_condensed"]] <- all_sources_dcc_joined_dedup_condensed
 
-# Step 5: save every object as an .rds in the derived folder.
+# Step 5: save every object in its corresponding derived subfolder.
 
 purrr::iwalk(
   objects_to_save,
   \(object, object_name) {
+    target_folder <- dplyr::case_when(
+      stringr::str_detect(
+        object_name,
+        "^all_sources_dcc_joined"
+      ) ~ file.path(
+        derived_folder,
+        "all_sources_dcc_joined"
+      ),
+
+      stringr::str_detect(
+        object_name,
+        "^data_raw_"
+      ) ~ file.path(
+        derived_folder,
+        object_name |>
+          stringr::str_remove("^data_raw_") |>
+          stringr::str_remove("_renamed$"),
+        "raw"
+      ),
+
+      stringr::str_detect(
+        object_name,
+        "_dcc_joined(_dedup)?$"
+      ) ~ file.path(
+        derived_folder,
+        object_name |>
+          stringr::str_remove("_dcc_joined(_dedup)?$"),
+        "joined_with_dcc"
+      ),
+
+      stringr::str_detect(
+        object_name,
+        "_data_clean$"
+      ) ~ file.path(
+        derived_folder,
+        object_name |>
+          stringr::str_remove("_data_clean$")
+      ),
+
+      .default = derived_folder
+    )
+
+    dir.create(
+      target_folder,
+      recursive = TRUE,
+      showWarnings = FALSE
+    )
+
     saveRDS(
       object,
-      file = file.path(derived_folder, paste0(object_name, ".rds"))
+      file = file.path(
+        target_folder,
+        paste0(object_name, ".rds")
+      )
     )
   }
 )
