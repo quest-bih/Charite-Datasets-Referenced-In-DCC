@@ -1,237 +1,135 @@
----
-title: "README"
-author: "Avihay Cohen"
-date: "2026-06-24"
-output: html_document
----
+# Detecting Datasets in the Data Citation Corpus (DCC)
 
-# Dataset Identifiers Mentioned in DCC
+This R/Quarto project identifies dataset identifiers from **ODDPub (Numbat)**, **ROAGG**, and **DataStet** that also occur in the **Data Citation Corpus (DCC)**. It standardizes dataset identifiers, matches sources to DCC on `dataset_clean`, enriches matched article DOIs with OpenAlex metadata, and provides a Quarto report with suggested plots.
 
-## Overview
+The matching workflow is intentionally inclusive so that potential matches are not lost. **The final result table should be reviewed manually before analysis.**
 
-This Quarto document loads dataset-identifier lists from several sources, standardizes them, and matches them against DCC dataset identifiers.
+## Quick start
 
-The supported source inputs are:
+1. Clone the repository and open `Charite-Datasets-Referenced-In-DCC.Rproj` in RStudio.
+2. Restore the project environment:
 
-* ODDPub
-* ROAGG
-* DataStet
-* DCC
+   ```r
+   renv::restore()
+   ```
 
-The document is interactive. During the run, the user is asked to:
+3. Render `Charite-Datasets-Referenced-In-DCC.qmd`.
+4. Review/curate the matched result table.
+5. Run `scripts/Openalex_authors_and_years_extract_join_exc_au_ov_and_same_dois.R`.
+6. Review the OpenAlex-enriched result and apply any remaining manual exclusions.
+7. Render `Results.qmd` to create `Results.html`.
 
-* choose which sources should be matched with DCC
-* choose the output folder
-* choose the storage type of each input
-* choose the file or folder for each input
-* choose which columns should be used as dataset identifier, cleaned dataset identifier (if relevant), and article DOI
-* choose source-specific filters where applicable
+For a screenshot-by-screenshot guide to the interactive prompts, see `Detecting Datasets in the Data Citation Corpus.docx`.
 
-## Purpose
+## 1. Match source identifiers to DCC
 
-The goal of the workflow is to:
+`Charite-Datasets-Referenced-In-DCC.qmd` is the main workflow. During rendering, it asks you to:
 
-1. load dataset identifier lists from multiple tools or sources
-2. validate them before further processing
-3. clean and standardize dataset identifiers
-4. match source identifiers to DCC identifiers using a common cleaned identifier
-5. save all important intermediate and final outputs for later inspection
+- select one or more sources: ODDPub, ROAGG, and/or DataStet
+- choose an output folder
+- choose whether each input is raw or already cleaned
+- select the input file (or, for DCC CSV input, a folder)
+- map the dataset identifier, optional cleaned identifier, and article DOI columns
 
-## Supported Input Types
+Supported source inputs are RDS/RDA/RData or a single CSV file. DCC supports RDS/RDA/RData or a folder of CSV files.
 
-### ODDPub, ROAGG, and DataStet
+⚠️ **Important:** Currently, only the raw RDS/RDA input workflow has been tested and verified. Other input options, including CSV inputs and already-cleaned inputs, are implemented but should be tested before being used for analysis.
 
-These inputs can be provided as:
+Source-specific filtering is applied before matching:
 
-* raw RDS / RDA / RData
-* already-cleaned RDS / RDA / RData
-* raw CSV file
-* already-cleaned CSV file
+- **ODDPub:** choose the columns and value combinations that define the open/restricted cases to keep.
+- **ROAGG:** `resourceType` is restricted to `Dataset` when present, and selected `publicationYear` values are kept when that column is present.
+- **DataStet:** no additional source-specific filter is applied.
 
-### DCC
+Dataset values are then normalized for processing and the validated inputs are saved. For raw inputs, dataset identifiers are standardized with `dataset_cleaner()`; already-cleaned inputs reuse their supplied cleaned identifier. The helper scripts in `R/` are sourced automatically, including the functions used for dataset cleaning and DCC CSV loading.
 
-DCC can be provided as:
+Each source is then matched to DCC with an inner join on `dataset_clean`. The combined result uses the key columns:
 
-* raw RDS / RDA / RData
-* already-cleaned RDS / RDA / RData
-* folder with raw CSV files
-* folder with already-cleaned CSV files
+- `source`
+- `dataset_clean`
+- `dataset_source`
+- `dataset_dcc`
+- `doi_charite`
+- `doi_dcc`
 
-If a CSV input is used, the document converts it to RDS and saves the converted file in the derived output folder.
+### Main outputs
 
-## Input Validation
+The selected output folder contains `raw/` and `derived/`. The most useful combined tables are in:
 
-Each loaded input is validated before further processing.
+`derived/all_sources_dcc_joined/`
 
-The validation step:
+- `all_sources_dcc_joined.rds` — full combined matched table.
+- `all_sources_dcc_joined_condensed.rds` — analysis-focused columns.
+- `all_sources_dcc_joined_dedup.rds` — exact duplicate rows removed within each source match.
+- `all_sources_dcc_joined_dedup_condensed.rds` — condensed version of the previous table.
 
-* checks that the loaded object is a data frame / tibble
-* checks character and factor columns for text/encoding problems
-* removes rows containing values that cannot be converted safely to UTF-8
-* logs removed or problematic values
-* saves the validated input as an RDS file for downstream processing
+Source overlap is **not** resolved by a fixed hierarchy at this stage; `Results.qmd` includes overlap summaries that can inform later deduplication decisions.
 
-If an input cannot be validated or becomes empty after validation, it is skipped.
+The workflow also saves cleaning/intermediate objects, `derived/input_validation_log.csv`, and `derived/runtime_documentation.csv`.
 
-This means the workflow is designed to continue even when one or more inputs are invalid or corrupted for input-related reasons.
+## 2. Add OpenAlex metadata and remove obvious article overlap
 
-## Column Mapping
+Run:
 
-For every input, the user is asked to map columns to the internal analysis structure.
+`scripts/Openalex_authors_and_years_extract_join_exc_au_ov_and_same_dois.R`
 
-### For raw inputs
+Select a CSV/RDS result table containing `doi_dcc` and `doi_charite`, then choose an output folder. It should be the result table: `all_sources_dcc_joined_dedup.rds`.
 
-The user maps:
+The script:
 
-* original dataset identifier column
-* article DOI column, or **No article DOI column**
+1. normalizes and deduplicates DOI values for lookup;
+2. retrieves publication years and authors from OpenAlex;
+3. automatically retries DOIs with incomplete author/year metadata once;
+4. joins the finalized metadata back to the original rows;
+5. removes rows with demonstrated shared authors;
+6. removes rows where normalized `doi_dcc` and `doi_charite` are identical;
+7. saves intermediate checkpoints and the final RDS file.
 
-### For already-cleaned inputs
+The final filename is based on the selected input and ends with:
 
-The user maps:
+`_w_au_year_au_ov_no_shared_doi.rds`
 
-* original dataset identifier column
-* cleaned dataset identifier column
-* article DOI column, or **No article DOI column**
+Missing OpenAlex metadata is retained rather than treated as evidence of overlap.
 
-If **No article DOI column** is selected, the workflow creates an empty DOI column filled with missing values.
+## 3. Manual review
 
-## Source-Specific Filtering
+Before using the result analytically, inspect it for cases such as:
 
-### ODDPub
+- irrelevant publication years or preprints;
+- ROAGG/DataStet matches that are not open/restricted data;
+- values that are not actually datasets;
+- multiple identifiers representing the same dataset or other identifier edge cases.
 
-The user is asked to define which columns determine whether a dataset is considered open.
+Identifier cleaning is deliberately inclusive. For example, identifier ranges such as `gse005-gse015` may be expanded into the identifiers in that range.
 
-The user then selects which combinations of values should be kept.
+For incremental updates, curate the newly generated rows before appending them to an existing clean result table.
 
-### ROAGG
+## 4. Plot results
 
-If the input contains a `resourceType` column, only rows with `resourceType = Dataset` are kept, case-insensitively.
+⚠️ **Important:** `Results.qmd` expects the following files:
 
-If the input contains a `publicationYear` column, the user can choose which `publicationYear` values to keep.
+  - `data/output/openalex_script_output/all_sources_dcc_joined_condensed_dist_w_au_year_au_ov_no_shared_doi.rds`
+  - `data/output/derived/all_sources_dcc_joined/all_sources_dcc_joined_condensed.rds`
+  - `data/output/derived/oddpub/cleaning_steps/oddpub_cleaning_steps_13_rm_trailing_slash.rds`
+  - `data/output/derived/roagg/cleaning_steps/roagg_cleaning_steps_13_rm_trailing_slash.rds`
+  - `data/output/derived/datastet/cleaning_steps/datastet_cleaning_steps_13_rm_trailing_slash.rds`
 
-### DataStet
+**Therefore, before rendering `Results.qmd`, all cases that were manually removed from the final result table should also be removed from these tables, preferably using a script.**
 
-No additional source-specific filter is applied.
+Render `Results.qmd` from the project root. The current file is configured for the repository output folder `data/output` and loads:
 
-## Dataset Cleaning
+- the curated OpenAlex-enriched result from `data/output/openalex_script_output/`;
+- `derived/all_sources_dcc_joined/all_sources_dcc_joined_condensed.rds`;
+- the final cleaning-step RDS files for ODDPub, ROAGG, and DataStet.
 
-After all inputs are loaded and validated, dataset identifiers are prepared for matching.
+It produces suggested plots for matched datasets, associated articles, mentions, repository distributions, reference frequency, yearly top identifiers, and overlap among sources.
 
-### If the input is raw
+If your curated/OpenAlex output has a different filename or location, update the `paths` object near the top of `Results.qmd` before rendering. The plotting file is configured for a full three-source run, so its required input paths must exist.
 
-* the dataset identifier column is cleaned using `dataset_cleaner()`
-* the cleaned identifier is stored in a new column called `dataset_clean`
+## Key files
 
-### If the input is already cleaned
-
-* the existing cleaned identifier column is used directly
-* `dataset_cleaner()` is not run
-
-### DCC-specific rule
-
-For DCC only:
-
-* rows where DOI equals `dataset` or `dataset_clean` are removed after preparation
-
-## Matching Logic
-
-Each selected source is matched separately against DCC.
-
-Matching is performed by:
-
-* joining the source data and the DCC data on `dataset_clean`
-
-For each matched table, the output contains:
-
-* `source`
-* `dataset_clean`
-* `dataset_source`
-* `dataset_dcc`
-* `doi_source`
-* `doi_dcc`
-* all remaining columns from both sides
-
-Separate matched tables are created for:
-
-* ODDPub vs DCC
-* ROAGG vs DCC
-* DataStet vs DCC
-
-In addition, all per-source matched tables are combined into one appended table.
-
-## Outputs
-
-All major outputs are saved as RDS files in the derived output folder.
-
-Examples include:
-
-* validated raw inputs
-* renamed raw inputs
-* cleaned inputs
-* per-source matched tables
-* deduplicated matched tables
-* combined matched tables
-* validation log
-
-A CSV file named `input_validation_log.csv` is also written to the derived output folder.
-
-This file documents removed invalid rows and validation issues detected during input checking.
-
-## Summary Table
-
-At the end of the run, the document displays a summary table with counts for:
-
-* ODDPub Articles
-* ODDPub Datasets
-* DataStet Articles
-* DataStet Datasets
-* ROAGG Articles
-* ROAGG Datasets
-* DCC Mentioning Articles
-* DCC Mentions
-* DCC Datasets
-
-Only the selected and successfully processed source inputs are included in the summary.
-
-## Runtime Documentation
-
-At the beginning of the run, the document records the render start time.
-
-At the end of the run, it writes a CSV file named `runtime_documentation.csv`.
-
-This file contains:
-
-* `render_start`
-* `render_end`
-* `duration_seconds`
-
-## Important Notes
-
-* The workflow is designed to be robust to input-level problems.
-* Invalid rows with encoding problems are removed automatically.
-* Invalid or unusable inputs are skipped rather than causing the entire document to fail, as far as input-related issues are concerned.
-* The workflow still depends on required packages, sourced helper scripts, and working GUI prompts being available.
-* The external functions `dataset_cleaner()` and `dcc_csv_to_rds()` must exist in the `R` folder and be sourceable at runtime.
-
-## Expected External Helpers
-
-The qmd expects the following helper functions to exist in external R scripts:
-
-* `dataset_cleaner()`
-* `dcc_csv_to_rds()`
-
-These scripts are sourced automatically from the local `R` folder at the start of the document.
-
-## Recommended Usage
-
-1. Start the qmd render.
-2. Select which source inputs should be matched with DCC.
-3. Choose the output folder.
-4. For each selected source, choose the input type and input file.
-5. For DCC, choose the input type and the file or folder.
-6. Review source-specific filters when prompted.
-7. Map the relevant columns for each input.
-8. Let the workflow validate, clean, match, and save the outputs.
-
-## End
+- `Charite-Datasets-Referenced-In-DCC.qmd` — interactive cleaning and DCC matching workflow.
+- `R/` — dataset-cleaning and input helper functions sourced by the main workflow.
+- `scripts/Openalex_authors_and_years_extract_join_exc_au_ov_and_same_dois.R` — OpenAlex enrichment and article-overlap exclusions.
+- `Results.qmd` — analysis summaries and suggested plots.
+- `Detecting Datasets in the Data Citation Corpus.docx` — detailed illustrated operating instructions.
