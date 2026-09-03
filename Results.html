@@ -182,6 +182,34 @@ Figure&nbsp;2
 <section id="sources-of-identifiers" class="level1">
 <h1>Sources of Identifiers</h1>
 <div class="cell">
+<div class="cell-output cell-output-stdout">
+<pre><code># A tibble: 3 × 2
+  source   unique_contribution
+  &lt;chr&gt;                  &lt;int&gt;
+1 ODDPub                   732
+2 DataStet                1421
+3 ROAGG                    117</code></pre>
+</div>
+<div class="cell-output cell-output-stdout">
+<pre><code># A tibble: 3 × 2
+  source   unique_contribution
+  &lt;chr&gt;                  &lt;int&gt;
+1 ODDPub                   732
+2 ROAGG                    128
+3 DataStet                1410</code></pre>
+</div>
+<div class="cell-output cell-output-stdout">
+<pre><code># A tibble: 7 × 2
+  overlap                n_datasets
+  &lt;fct&gt;                       &lt;int&gt;
+1 ODDPub only                   413
+2 DataStet only                1410
+3 ROAGG only                    117
+4 ODDPub + DataStet only        277
+5 ODDPub + ROAGG only            33
+6 DataStet + ROAGG only          11
+7 All three                       9</code></pre>
+</div>
 <div class="cell-output-display">
 <div id="fig-venn-ids" class="quarto-float quarto-figure quarto-figure-center anchored" width="100%">
 <figure class="quarto-float quarto-float-fig figure">

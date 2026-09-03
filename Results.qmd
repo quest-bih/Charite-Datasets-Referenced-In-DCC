@@ -847,81 +847,169 @@ year_dcc_dt_all_for_plot_top10 |>
 #| label: fig-venn-ids
 #| out.width: 100%
 
-id_source_for_venn <- all_sources_dcc_joined_condensed |>
-  distinct() |> 
-  dplyr::select(dataset_clean, source) |>
-  dplyr::filter(
-    !is.na(dataset_clean),
-    dataset_clean != "",
-    !is.na(source),
-    source != ""
-  ) |>
-  dplyr::distinct()
+# Data
+dat <- all_sources_dcc_joined_condensed
 
-venn_input_for_debugging <- id_source_for_venn |>
-  tidyr::pivot_wider(
-    names_from = source,
-    values_from = source,
-    values_fn = length,
-    values_fill = 0
-  ) |>
-  dplyr::mutate(
-    dplyr::across(-dataset_clean, ~ .x > 0)
+# ------------------------------------------------------------
+# Order 1: ODDPub -> DataStet -> ROAGG
+# ------------------------------------------------------------
+
+oddpub <- dat |>
+  dplyr::filter(source == "ODDPub") |>
+  dplyr::distinct(dataset_clean)
+
+datastet_new <- dat |>
+  dplyr::filter(source == "DataStet") |>
+  dplyr::distinct(dataset_clean) |>
+  dplyr::anti_join(
+    oddpub,
+    by = "dataset_clean"
   )
 
-setlist <- id_source_for_venn |>
+roagg_new <- dat |>
+  dplyr::filter(source == "ROAGG") |>
+  dplyr::distinct(dataset_clean) |>
+  dplyr::anti_join(
+    dplyr::bind_rows(oddpub, datastet_new) |>
+      dplyr::distinct(dataset_clean),
+    by = "dataset_clean"
+  )
+
+counts_oddpub_datastet_roagg <- tibble::tibble(
+  source = c("ODDPub", "DataStet", "ROAGG"),
+  unique_contribution = c(
+    nrow(oddpub),
+    nrow(datastet_new),
+    nrow(roagg_new)
+  )
+)
+
+counts_oddpub_datastet_roagg
+
+
+# ------------------------------------------------------------
+# Order 2: ODDPub -> ROAGG -> DataStet
+# ------------------------------------------------------------
+
+oddpub <- dat |>
+  dplyr::filter(source == "ODDPub") |>
+  dplyr::distinct(dataset_clean)
+
+roagg_new <- dat |>
+  dplyr::filter(source == "ROAGG") |>
+  dplyr::distinct(dataset_clean) |>
+  dplyr::anti_join(
+    oddpub,
+    by = "dataset_clean"
+  )
+
+datastet_new <- dat |>
+  dplyr::filter(source == "DataStet") |>
+  dplyr::distinct(dataset_clean) |>
+  dplyr::anti_join(
+    dplyr::bind_rows(oddpub, roagg_new) |>
+      dplyr::distinct(dataset_clean),
+    by = "dataset_clean"
+  )
+
+counts_oddpub_roagg_datastet <- tibble::tibble(
+  source = c("ODDPub", "ROAGG", "DataStet"),
+  unique_contribution = c(
+    nrow(oddpub),
+    nrow(roagg_new),
+    nrow(datastet_new)
+  )
+)
+
+counts_oddpub_roagg_datastet
+
+
+# All 7 mutually exclusive source combinations
+
+dataset_overlap_counts <- dat |>
+  dplyr::filter(source %in% c("ODDPub", "DataStet", "ROAGG")) |>
   dplyr::distinct(dataset_clean, source) |>
-  dplyr::group_by(source) |>
+  dplyr::group_by(dataset_clean) |>
   dplyr::summarise(
-    items = list(dataset_clean),
+    oddpub = "ODDPub" %in% source,
+    datastet = "DataStet" %in% source,
+    roagg = "ROAGG" %in% source,
     .groups = "drop"
   ) |>
-  tibble::deframe()
+  dplyr::mutate(
+    overlap = dplyr::case_when(
+      oddpub & !datastet & !roagg ~ "ODDPub only",
+      !oddpub & datastet & !roagg ~ "DataStet only",
+      !oddpub & !datastet & roagg ~ "ROAGG only",
+      oddpub & datastet & !roagg ~ "ODDPub + DataStet only",
+      oddpub & !datastet & roagg ~ "ODDPub + ROAGG only",
+      !oddpub & datastet & roagg ~ "DataStet + ROAGG only",
+      oddpub & datastet & roagg ~ "All three",
+      .default = NA_character_
+    ),
+    overlap = factor(
+      overlap,
+      levels = c(
+        "ODDPub only",
+        "DataStet only",
+        "ROAGG only",
+        "ODDPub + DataStet only",
+        "ODDPub + ROAGG only",
+        "DataStet + ROAGG only",
+        "All three"
+      )
+    )
+  ) |>
+  dplyr::count(overlap, name = "n_datasets") |>
+  tidyr::complete(
+    overlap,
+    fill = list(n_datasets = 0)
+  )
 
-n_sources <- length(setlist)
+dataset_overlap_counts
 
-stopifnot(n_sources %in% c(2L, 3L))
 
-max_source_chars <- max(nchar(names(setlist)))
-max_set_size <- max(lengths(setlist))
+# Plot
 
-set_name_size <- dplyr::case_when(
-  max_source_chars <= 12 ~ 7,
-  max_source_chars <= 25 ~ 6,
-  .default = 5
+dat <- all_sources_dcc_joined_condensed |>
+  dplyr::filter(source %in% c("ODDPub", "DataStet", "ROAGG")) |>
+  dplyr::distinct(dataset_clean, source)
+
+venn_sets <- list(
+  ODDPub = dat |>
+    dplyr::filter(source == "ODDPub") |>
+    dplyr::pull(dataset_clean),
+
+  DataStet = dat |>
+    dplyr::filter(source == "DataStet") |>
+    dplyr::pull(dataset_clean),
+
+  ROAGG = dat |>
+    dplyr::filter(source == "ROAGG") |>
+    dplyr::pull(dataset_clean)
 )
 
-text_size <- dplyr::case_when(
-  max_set_size <= 30 ~ 6,
-  max_set_size <= 150 ~ 5,
-  .default = 4.2
-)
-
-fig_width <- dplyr::case_when(
-  n_sources == 2 ~ pmin(10, pmax(7, 6.6 + 0.05 * max_source_chars)),
-  .default = pmin(12, pmax(8.5, 8.2 + 0.05 * max_source_chars))
-)
-
-fig_height <- dplyr::case_when(
-  n_sources == 2 ~ pmin(8.5, pmax(6.5, 5.8 + 0.01 * max_set_size)),
-  .default = pmin(10.5, pmax(7.5, 7.0 + 0.01 * max_set_size))
-)
-
-fill_colors <- c("#A6CEE3", "#B2DF8A", "#FDBF6F")[seq_len(n_sources)]
-
-knitr::opts_current$set(
-  fig.width = fig_width,
-  fig.height = fig_height
+# Control circle fill colors here
+venn_colors <- c(
+  ODDPub = "#4C78A8",
+  DataStet = "#F58518",
+  ROAGG = "#54A24B"
 )
 
 ggvenn::ggvenn(
-  setlist,
-  set_name_size = set_name_size,
-  text_size = text_size,
-  fill_color = fill_colors,
-  stroke_size = 0.7,
-  stroke_color = "black"
-)
+  venn_sets,
+  fill_color = venn_colors[names(venn_sets)],
+  fill_alpha = 0.4,
+  stroke_size = 0.8,
+  set_name_size = 5,
+  text_size = 4,
+  show_elements = FALSE,
+  show_percentage = TRUE
+) +
+  ggplot2::labs(
+    title = "Overlap of datasets across sources"
+  ) +
+  ggplot2::theme_void()
 
 
 ```
